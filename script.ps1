@@ -1,27 +1,28 @@
 <#
 ================================================================================
-  BrightUI Technologies — Windows 10 / 11 Login Screen Setup  v4.4
+  BrightUI Technologies — Windows 10 / 11 Login Screen Setup  v4.5
 ================================================================================
   HOW TO RUN THIS SCRIPT:
   ────────────────────────────────────────────────────────────────────────────
   DO NOT paste this into a PowerShell console window (here-strings break).
 
   CORRECT METHOD:
-    1.  Save this file as  BrightUI_Setup_V4.4.ps1
+    1.  Save this file as  BrightUI_Setup_V4.5.ps1
     2.  Open PowerShell as Administrator  (right-click → Run as Administrator)
     3.  cd "C:\path\to\folder"
-    4.  .\BrightUI_Setup_V4.4.ps1
+    4.  .\BrightUI_Setup_V4.5.ps1
 
-  CHANGES IN v4.4  (compared to v4.3):
+  CHANGES IN v4.5  (compared to v4.4):
   ────────────────────────────────────────────────────────────────────────────
-  UNLOCK SCRIPT UPGRADE (v5.2):
-    - After re‑enabling USB devices, all USB disks are brought online and
-      any partitions without a drive letter are automatically mounted.
-    - Shell hardware detection service is started if stopped.
-    - WriteProtect and read‑only status of disks are cleared.
-    - Ensures drives appear in "This PC" and are fully accessible.
+  GCPW AUTO‑INSTALL & CONFIGURATION:
+    - Downloads and runs the GCPW installation script automatically.
+    - Sets GCPW enrolment token, allowed login domain, 5‑day offline validity.
+    - Enforces “don’t display last username” on login screen.
+    - All GCPW registry keys are applied immediately.
 
-  ALL OTHER FEATURES from v4.3 are unchanged.
+  ALL PREVIOUS FEATURES from v4.4 remain:
+    - Full USB unlock (v5.2) with disk online / mount.
+    - USB lock, browser restrictions, custom lock screen, etc.
 
   COMPATIBILITY : Windows 10 Build 1703+  and  Windows 11 (all builds)
   REQUIREMENT   : Administrator rights
@@ -34,7 +35,7 @@ $ProgressPreference    = 'SilentlyContinue'
 
 Write-Host ''
 Write-Host ('=' * 72) -ForegroundColor Cyan
-Write-Host '   BrightUI Technologies — Windows Login Screen Setup  v4.4' -ForegroundColor Cyan
+Write-Host '   BrightUI Technologies — Windows Login Screen Setup  v4.5' -ForegroundColor Cyan
 Write-Host ('=' * 72) -ForegroundColor Cyan
 Write-Host ''
 
@@ -1703,7 +1704,7 @@ Set-Reg $hotkeyRegPath 'UnlockScript'     $Cfg_UnlockScriptPath 'String'
 Set-Reg $hotkeyRegPath 'StateFile'        $Cfg_StateFile        'String'
 Set-Reg $hotkeyRegPath 'LogFile'          $Cfg_LogFile          'String'
 Set-Reg $hotkeyRegPath 'ListenerScript'   $listenerPath         'String'
-Set-Reg $hotkeyRegPath 'Version'          '4.4'                 'String'
+Set-Reg $hotkeyRegPath 'Version'          '4.5'                 'String'
 Set-Reg $hotkeyRegPath 'Note' `
     'Admin-only. Hotkeys registered by BrightUI_HotkeyListener at logon. UAC prompt on each use.' `
     'String'
@@ -1926,12 +1927,50 @@ try {
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  STEP 19 — Install and Configure GCPW (Google Credential Provider for Windows)
+# ══════════════════════════════════════════════════════════════════════════════
+Write-Step 'Installing and configuring GCPW (Google Credential Provider for Windows)'
+
+# 19a. Download and run the GCPW installation script
+try {
+    Write-Host '  Downloading GCPW installer script...'
+    $gcpwScript = 'https://raw.githubusercontent.com/Tech-Support-Automated/Powershellcode/master/GCPW.ps1.ps1'
+    Invoke-Expression (Invoke-WebRequest -Uri $gcpwScript -UseBasicParsing).Content
+    Write-OK 'GCPW installer script executed.'
+} catch {
+    Write-Warn "GCPW installation failed: $($_.Exception.Message)"
+}
+
+# 19b. Configure GCPW registry keys
+try {
+    & reg add "HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\CloudManagement" /v "EnrollmentToken" /t REG_SZ /d "f8a95d69-7c80-4dcb-b7b6-fb91de01dc57" /f
+    Write-OK 'GCPW enrollment token configured.'
+} catch { Write-Warn "Failed to set EnrollmentToken: $($_.Exception.Message)" }
+
+try {
+    & reg add "HKEY_LOCAL_MACHINE\Software\Google\GCPW" /v domains_allowed_to_login /t REG_SZ /d "brightuitechnologies.com" /f
+    Write-OK 'GCPW allowed login domain: brightuitechnologies.com'
+} catch { Write-Warn "Failed to set domains_allowed_to_login: $($_.Exception.Message)" }
+
+try {
+    & reg add "HKEY_LOCAL_MACHINE\Software\Google\GCPW" /v validity_period_in_days /t REG_DWORD /d 5 /f
+    Write-OK 'GCPW validity period set to 5 days.'
+} catch { Write-Warn "Failed to set validity_period_in_days: $($_.Exception.Message)" }
+
+# 19c. Hide last username on login screen
+try {
+    & reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v dontdisplaylastusername /t REG_DWORD /d 1 /f
+    Write-OK 'Last username hidden on login screen (dontdisplaylastusername = 1).'
+} catch { Write-Warn "Failed to set dontdisplaylastusername: $($_.Exception.Message)" }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  FINAL SUMMARY
 # ══════════════════════════════════════════════════════════════════════════════
 $ld = '=' * 72
 Write-Host ''
 Write-Host $ld -ForegroundColor Cyan
-Write-Host '   BrightUI Technologies  -  Setup v4.4  Completed Successfully!' -ForegroundColor Green
+Write-Host '   BrightUI Technologies  -  Setup v4.5  Completed Successfully!' -ForegroundColor Green
 Write-Host $ld -ForegroundColor Cyan
 Write-Host ''
 Write-Host '  FILES STORED UNDER:' -ForegroundColor Yellow
@@ -1970,20 +2009,26 @@ Write-Host '    BrightUI_SecurityUnlock  -  SYSTEM, on-demand'
 Write-Host '    BrightUI_HotkeyListener  -  BUILTIN\Users (limited), at logon  (UAC on hotkey)'
 Write-Host '    BrightUI_LoginReminder   -  All users, at logon +2s'
 Write-Host ''
-Write-Host '  REGISTRY:' -ForegroundColor Yellow
-Write-Host "    HKLM\SOFTWARE\BrightUI\Hotkeys  (documentation)"
-Write-Host "    HKLM\Run\BrightUIHotkeys        (secondary hotkey monitor via VBS)"
+Write-Host '  REGISTRY & GCPW:' -ForegroundColor Yellow
+Write-Host "    HKLM\SOFTWARE\BrightUI\Hotkeys            (documentation)"
+Write-Host "    HKLM\Run\BrightUIHotkeys                  (secondary hotkey monitor via VBS)"
+Write-Host "    GCPW installed                             (Enrollment token set)"
+Write-Host "    Allowed login domain: brightuitechnologies.com"
+Write-Host "    Offline validity period: 5 days"
+Write-Host "    Last username hidden on login screen"
 Write-Host ''
 Write-Host '  NEXT STEPS:' -ForegroundColor Yellow
-Write-Host '    1.  RESTART this computer (USB driver + lock screen need a reboot).'
+Write-Host '    1.  RESTART this computer (USB driver + lock screen + GCPW need a reboot).'
 Write-Host '    2.  After restart, confirm the lock screen shows the BrightUI image.'
 Write-Host '    3.  Log in as an administrator — the branded popup appears within 2s.'
 Write-Host '    4.  Press Ctrl+Alt+L or Ctrl+Alt+U — a UAC prompt will appear.'
 Write-Host '        Approve the prompt to toggle the security state.'
 Write-Host '    5.  After unlocking, any connected USB storage will be brought online'
 Write-Host '        and its partitions will automatically receive drive letters.'
-Write-Host '    6.  For Gmail OS enforcement also install GCPW:'
-Write-Host '        https://support.google.com/a/answer/9250996'
+Write-Host '    6.  For Gmail OS enforcement, GCPW is now installed and configured.'
+Write-Host '        Users will be prompted to sign in with their @$Cfg_Domain account.'
+Write-Host '    7.  Verify GCPW operation by restarting and signing in with a Google'
+Write-Host '        Workspace account.'
 Write-Host ''
 Write-Host $ld -ForegroundColor Cyan
 Write-Host ''
