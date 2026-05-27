@@ -1,35 +1,41 @@
 <#
 ================================================================================
-  BrightUI Technologies — Windows 10 / 11 Login Screen Setup  v4.7
-  (User‑mode – no admin required)
+  BrightUI Technologies — Windows 10 / 11 Login Screen Setup  v4.6
 ================================================================================
-  HOW TO RUN:
-    1.  Save this file as  BrightUI_Setup_V4.7.ps1
-    2.  Open PowerShell as the CURRENT USER (not as Administrator).
-        If you are an admin, you may run it without elevation for user‑only setup.
-    3.  cd to the script's folder and run:
-           .\BrightUI_Setup_V4.7.ps1
+  HOW TO RUN THIS SCRIPT:
+  ────────────────────────────────────────────────────────────────────────────
+  DO NOT paste this into a PowerShell console window (here-strings break).
 
-  WHAT THIS SCRIPT DOES:
-    - Creates all files under  %LOCALAPPDATA%\BrightUI
-    - Applies user‑level policies (HKCU) for lock screen, browsers, USB block
-    - Installs hotkey listeners via Startup folder (no scheduled tasks)
-    - Skips admin‑only features when run without elevation
-    - After a REBOOT the setup becomes fully active
+  CORRECT METHOD:
+    1.  Save this file as  BrightUI_Setup_V4.6.ps1
+    2.  Open PowerShell as Administrator  (right-click → Run as Administrator)
+    3.  cd "C:\path\to\folder"
+    4.  .\BrightUI_Setup_V4.6.ps1
+
+  CHANGES IN v4.6  (compared to v4.5):
+  ────────────────────────────────────────────────────────────────────────────
+  GCPW INSTALLER FIX:
+    - Corrected the download URL to the official GCPW.ps1 script.
+    - Uses: iex (iwr 'https://raw.githubusercontent.com/.../GCPW.ps1').Content
+
+  REGISTRY IMPORT FIX:
+    - Added existence check for .reg file before import.
+    - Import now runs with full path quoting to avoid errors.
+
+  ALL OTHER FEATURES from v4.5 are unchanged.
 
   COMPATIBILITY : Windows 10 Build 1703+  and  Windows 11 (all builds)
-  NOTE          : For full functionality (system‑wide USB block, GCPW, etc.)
-                  the script must be run as Administrator.
+  REQUIREMENT   : Administrator rights
+  AFTER RUNNING : RESTART the computer for all changes to take full effect.
 ================================================================================
 #>
 
-$ErrorActionPreference = 'Continue'
+$ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
 
 Write-Host ''
 Write-Host ('=' * 72) -ForegroundColor Cyan
-Write-Host '   BrightUI Technologies — Windows Login Screen Setup  v4.7' -ForegroundColor Cyan
-Write-Host '   (User‑mode – no admin required)' -ForegroundColor Yellow
+Write-Host '   BrightUI Technologies — Windows Login Screen Setup  v4.6' -ForegroundColor Cyan
 Write-Host ('=' * 72) -ForegroundColor Cyan
 Write-Host ''
 
@@ -42,21 +48,20 @@ $Cfg_Domain      = 'brightuitechnologies.com'
 $Cfg_SupportURL  = 'https://portal.brightuitechnologies.com'
 $Cfg_LogoURL     = 'https://dev.brightuitechnologies.com/site/wp-content/themes/startnext/landing/img/logo.png'
 
-# All files are stored in the current user's LOCALAPPDATA (no admin needed for C: drive)
-$Cfg_RootDir    = "$env:LOCALAPPDATA\BrightUI"
-$Cfg_AssetsDir  = "$Cfg_RootDir\Assets"
-$Cfg_ScriptsDir = "$Cfg_RootDir\Scripts"
-$Cfg_StateFile  = "$Cfg_RootDir\toggle_state.txt"
-$Cfg_LogFile    = "$Cfg_RootDir\hotkey_log.txt"
+$Cfg_RootDir    = 'C:\ProgramData\BrightUI'
+$Cfg_AssetsDir  = 'C:\ProgramData\BrightUI\Assets'
+$Cfg_ScriptsDir = 'C:\ProgramData\BrightUI\Scripts'
+$Cfg_StateFile  = 'C:\ProgramData\BrightUI\toggle_state.txt'
+$Cfg_LogFile    = 'C:\ProgramData\BrightUI\hotkey_log.txt'
 
-$Cfg_LockScriptPath   = "$Cfg_ScriptsDir\BrightUI_Lock.ps1"
-$Cfg_UnlockScriptPath = "$Cfg_ScriptsDir\BrightUI_Unlock.ps1"
+$Cfg_LockScriptPath   = 'C:\ProgramData\BrightUI\Scripts\BrightUI_Lock.ps1'
+$Cfg_UnlockScriptPath = 'C:\ProgramData\BrightUI\Scripts\BrightUI_Unlock.ps1'
 
 $Cfg_BgWidth  = 1920
 $Cfg_BgHeight = 1080
 
 $Cfg_UsbClassGuid  = '{53f56307-b6bf-11d0-94f2-00a0c91efb8b}'
-$Cfg_UsbPolicyBase = 'HKCU:\SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices'   # HKCU now
+$Cfg_UsbPolicyBase = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices'
 
 $Cfg_LockHotkeyName   = 'Ctrl+Alt+L'
 $Cfg_UnlockHotkeyName = 'Ctrl+Alt+U'
@@ -93,39 +98,29 @@ function Write-OK   { param([string]$Message)
 function Write-Warn { param([string]$Message)
     Write-Host "    [!!]  $Message" -ForegroundColor Yellow }
 
-function Write-Skip { param([string]$Message)
-    Write-Host "    [--]  SKIPPED: $Message" -ForegroundColor DarkYellow }
-
 function Set-Reg {
     param([string]$RegistryPath,[string]$Name,[object]$Value,[string]$Type='String')
     if (-not (Test-Path -LiteralPath $RegistryPath)) {
         New-Item -Path $RegistryPath -Force | Out-Null }
-    Set-ItemProperty -Path $RegistryPath -Name $Name -Value $Value -Type $Type -ErrorAction SilentlyContinue
-}
-
-$script:IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")
-if (-not $script:IsAdmin) {
-    Write-Warn 'Running WITHOUT administrator rights – some features will be skipped.'
-}
+    Set-ItemProperty -Path $RegistryPath -Name $Name -Value $Value -Type $Type }
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  STEP 1 — Create Working Directories
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Step 'Creating BrightUI directory structure under user profile'
+Write-Step 'Creating BrightUI directory structure under C:\ProgramData\BrightUI'
 
 foreach ($dir in @($Cfg_RootDir, $Cfg_AssetsDir, $Cfg_ScriptsDir)) {
     if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-    Write-OK "Directory ready: $dir"
-}
+    Write-OK "Directory ready: $dir" }
 
 try {
     $acl  = Get-Acl -LiteralPath $Cfg_RootDir
     $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-                $env:USERNAME,'FullControl','ContainerInherit,ObjectInherit','None','Allow')
+                'BUILTIN\Users','ReadAndExecute','ContainerInherit,ObjectInherit','None','Allow')
     $acl.AddAccessRule($rule)
     Set-Acl -LiteralPath $Cfg_RootDir -AclObject $acl
-    Write-OK "Full control for current user granted on $Cfg_RootDir"
+    Write-OK "Read permission for BUILTIN\Users granted on $Cfg_RootDir"
 } catch { Write-Warn "Could not set ACL: $($_.Exception.Message)" }
 
 
@@ -149,8 +144,7 @@ try {
     } else { Write-Warn 'Download completed but file appears empty — text placeholder will be used.' }
 } catch {
     Write-Warn "Logo download failed: $($_.Exception.Message)"
-    Write-Warn 'Background will use a styled text placeholder instead of the logo image.'
-}
+    Write-Warn 'Background will use a styled text placeholder instead of the logo image.' }
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -428,82 +422,76 @@ Write-OK "Advanced lock screen image saved (quality 98): $bgFilePath"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STEP 4 — Apply Lock Screen Background (User‑level policies)
+#  STEP 4 — Apply Lock Screen Background, Remove Spotlight, Disable Blur
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Step 'Applying lock screen image (HKCU policies)'
+Write-Step 'Applying lock screen image, removing Spotlight, disabling blur'
 
-# User‑level Personalization policy
-$persPath = 'HKCU:\SOFTWARE\Policies\Microsoft\Windows\Personalization'
+$persPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization'
 Set-Reg $persPath 'LockScreenImage'      $bgFilePath 'String'
 Set-Reg $persPath 'NoChangingLockScreen' 1           'DWord'
-Write-OK 'HKCU Personalization: LockScreenImage and NoChangingLockScreen set.'
+Write-OK 'Personalization policy: LockScreenImage and NoChangingLockScreen set.'
 
-# CSP path (also user‑level)
-$cspPath = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP'
+$cspPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP'
 Set-Reg $cspPath 'LockScreenImagePath'   $bgFilePath 'String'
 Set-Reg $cspPath 'LockScreenImageUrl'    $bgFilePath 'String'
 Set-Reg $cspPath 'LockScreenImageStatus' 1           'DWord'
-Write-OK 'HKCU PersonalizationCSP: lock screen image path configured.'
+Write-OK 'PersonalizationCSP: lock screen image path configured.'
 
-# Spotlight disabled (user‑level)
-$ccPath = 'HKCU:\SOFTWARE\Policies\Microsoft\Windows\CloudContent'
+$ccPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent'
 Set-Reg $ccPath 'DisableWindowsSpotlightOnLockScreen' 1 'DWord'
 Set-Reg $ccPath 'DisableWindowsConsumerFeatures'      1 'DWord'
 Set-Reg $ccPath 'DisableCloudOptimizedContent'        1 'DWord'
 Set-Reg $ccPath 'DisableSoftLanding'                  1 'DWord'
-Write-OK 'HKCU: Windows Spotlight on lock screen DISABLED.'
+Write-OK 'Windows Spotlight on lock screen DISABLED.'
 
-# Acrylic blur
-Set-Reg 'HKCU:\SOFTWARE\Policies\Microsoft\Windows\System' 'DisableAcrylicBackgroundOnLogon' 1 'DWord'
-Write-OK 'Acrylic blur on login screen DISABLED (HKCU).'
+$cdmPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'
+if (Test-Path -LiteralPath $cdmPath) {
+    Set-ItemProperty -Path $cdmPath -Name 'RotatingLockScreenEnabled'        -Value 0 -Type DWord -ErrorAction SilentlyContinue
+    Set-ItemProperty -Path $cdmPath -Name 'RotatingLockScreenOverlayEnabled' -Value 0 -Type DWord -ErrorAction SilentlyContinue
+    Write-OK 'ContentDeliveryManager: rotating lock screen images disabled.'
+}
+
+Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System' 'DisableAcrylicBackgroundOnLogon' 1 'DWord'
+Write-OK 'Acrylic blur on login screen DISABLED.'
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STEP 5 — Winlogon Legal Notice (admin only, skip if non‑admin)
+#  STEP 5 — Winlogon Pre-Login Legal Notice
 # ══════════════════════════════════════════════════════════════════════════════
 Write-Step 'Configuring Winlogon pre-login legal notice dialog'
-if ($script:IsAdmin) {
-    $winlogonPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
-    Set-Reg $winlogonPath 'LegalNoticeCaption' $Cfg_NoticeTitle 'String'
-    Set-Reg $winlogonPath 'LegalNoticeText'    $Cfg_NoticeBody  'String'
-    Write-OK "Winlogon legal notice configured."
-} else {
-    Write-Skip 'Admin rights required for Winlogon legal notice.'
-}
+
+$winlogonPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+Set-Reg $winlogonPath 'LegalNoticeCaption' $Cfg_NoticeTitle 'String'
+Set-Reg $winlogonPath 'LegalNoticeText'    $Cfg_NoticeBody  'String'
+Write-OK "Winlogon legal notice configured — title: '$Cfg_NoticeTitle'"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STEP 6 — Azure AD / Domain Hint (admin only)
+#  STEP 6 — Azure AD / Google Workspace Domain Hint
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Step "Setting Azure AD domain hint (admin only)"
-if ($script:IsAdmin) {
-    Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\AzureADAccount' 'DomainHint'        $Cfg_Domain 'String'
-    Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\AzureADAccount' 'AllowedAadTenants' $Cfg_Domain 'String'
-    Write-OK "Domain hint: @$Cfg_Domain"
-} else {
-    Write-Skip 'Admin rights required for Azure AD hint.'
-}
+Write-Step "Setting Azure AD domain hint to @$Cfg_Domain"
+
+Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\AzureADAccount' 'DomainHint'        $Cfg_Domain 'String'
+Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\AzureADAccount' 'AllowedAadTenants' $Cfg_Domain 'String'
+Write-OK "Domain hint: @$Cfg_Domain"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STEP 7 — OEM Branding (admin only)
+#  STEP 7 — OEM Branding
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Step 'Configuring OEM branding (admin only)'
-if ($script:IsAdmin) {
-    $oemPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation'
-    Set-Reg $oemPath 'Manufacturer' $Cfg_CompanyName 'String'
-    Set-Reg $oemPath 'SupportURL'   $Cfg_SupportURL  'String'
-    if ($logoDownloaded) { Set-Reg $oemPath 'Logo' $logoFilePath 'String'; Write-OK "OEM logo: $logoFilePath" }
-    Write-OK "OEM manufacturer: $Cfg_CompanyName  |  Support URL: $Cfg_SupportURL"
-} else {
-    Write-Skip 'Admin rights required for OEM branding.'
-}
+Write-Step 'Configuring OEM branding (Settings > System > About)'
+
+$oemPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation'
+Set-Reg $oemPath 'Manufacturer' $Cfg_CompanyName 'String'
+Set-Reg $oemPath 'SupportURL'   $Cfg_SupportURL  'String'
+if ($logoDownloaded) { Set-Reg $oemPath 'Logo' $logoFilePath 'String'; Write-OK "OEM logo: $logoFilePath" }
+Write-OK "OEM manufacturer: $Cfg_CompanyName  |  Support URL: $Cfg_SupportURL"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STEP 8 — Internet Connectivity Reminder (Startup folder)
+#  STEP 8 — Internet Connectivity Reminder (HKLM Run key at startup)
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Step 'Installing internet connectivity reminder (Startup folder)'
+Write-Step 'Installing internet connectivity reminder startup script'
 
 $checkPath    = Join-Path $Cfg_ScriptsDir 'BrightUI_InternetCheck.ps1'
 $checkContent = @'
@@ -524,62 +512,64 @@ if (-not $connected) {
         [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
 }
 '@
+
 Set-Content -Path $checkPath -Value $checkContent -Encoding UTF8
-
-# Create shortcut in Startup folder
-$startupDir = [Environment]::GetFolderPath('Startup')
-$shortcutPath = Join-Path $startupDir 'BrightUI_InternetCheck.lnk'
-$WshShell = New-Object -ComObject WScript.Shell
-$Shortcut = $WshShell.CreateShortcut($shortcutPath)
-$Shortcut.TargetPath = 'powershell.exe'
-$Shortcut.Arguments = "-WindowStyle Hidden -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$checkPath`""
-$Shortcut.WorkingDirectory = $Cfg_ScriptsDir
-$Shortcut.IconLocation = 'powershell.exe,0'
-$Shortcut.Save()
-Write-OK "Internet check shortcut placed in Startup: $shortcutPath"
+$runCmd = "powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$checkPath`""
+Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' 'BrightUI_InternetCheck' $runCmd 'String'
+Write-OK "Internet check script: $checkPath"
+Write-OK 'Registered in HKLM Run — runs at every startup for all users.'
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STEP 9 — USB Mass Storage Restriction (User‑level)
+#  STEP 9 — USB Mass Storage Restriction (dual-layer)
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Step 'Blocking USB mass storage (user‑level Group Policy)'
+Write-Step 'Blocking USB mass storage (USBSTOR driver + Group Policy)'
 
-# The HKLM USBSTOR driver cannot be changed without admin; we rely on HKCU policies.
+$usbStorPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\USBSTOR'
+if (Test-Path -LiteralPath $usbStorPath) {
+    Set-ItemProperty -Path $usbStorPath -Name 'Start' -Value 4 -Type DWord
+    Write-OK 'USBSTOR driver disabled (Start = 4).'
+} else { Write-Warn 'USBSTOR key not found — Group Policy layer still blocks USB.' }
+
 $usbPolPath = "$Cfg_UsbPolicyBase\$Cfg_UsbClassGuid"
 Set-Reg $usbPolPath 'Deny_Read'  1 'DWord'
 Set-Reg $usbPolPath 'Deny_Write' 1 'DWord'
-Write-OK "User Group Policy USB block: Deny_Read=1, Deny_Write=1."
+Write-OK "Group Policy USB block: Deny_Read=1, Deny_Write=1."
 
 Set-Content -Path $Cfg_StateFile -Value 'LOCKED' -Force -Encoding UTF8
 Write-OK "State file initialised: LOCKED  ($Cfg_StateFile)"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STEP 10 — Chrome Domain Restriction (User‑level)
+#  STEP 10 — Chrome Enterprise Domain Restriction
 # ══════════════════════════════════════════════════════════════════════════════
 Write-Step "Restricting Chrome browser sign-in to @$Cfg_Domain accounts"
 
-$chromePath = 'HKCU:\Software\Policies\Google\Chrome'
+$chromePath = 'HKLM:\SOFTWARE\Policies\Google\Chrome'
 Set-Reg $chromePath 'AllowedDomainsForApps'               $Cfg_Domain       'String'
 Set-Reg $chromePath 'RestrictSigninToPattern'             "*@$Cfg_Domain"   'String'
 Set-Reg $chromePath 'BrowserSignin'                       1                 'DWord'
 Set-Reg $chromePath 'SecondaryGoogleAccountSigninAllowed' 0                 'DWord'
-Write-OK "Chrome HKCU: AllowedDomainsForApps = $Cfg_Domain  |  RestrictSigninToPattern = *@$Cfg_Domain"
+Write-OK "Chrome: AllowedDomainsForApps = $Cfg_Domain  |  RestrictSigninToPattern = *@$Cfg_Domain"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STEP 11 — Microsoft Edge Domain Restriction (User‑level)
+#  STEP 11 — Microsoft Edge Domain Restriction
 # ══════════════════════════════════════════════════════════════════════════════
 Write-Step "Restricting Edge browser sign-in to @$Cfg_Domain accounts"
 
-$edgePath = 'HKCU:\Software\Policies\Microsoft\Edge'
+$edgePath = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
 Set-Reg $edgePath 'RestrictSigninToPattern' "*@$Cfg_Domain" 'String'
 Set-Reg $edgePath 'BrowserSignin'           1               'DWord'
-Write-OK "Edge HKCU: RestrictSigninToPattern = *@$Cfg_Domain"
+Write-OK "Edge: RestrictSigninToPattern = *@$Cfg_Domain"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  STEP 12 — ADVANCED Post-Login Reminder Popup  (v4.1 — WHITE TEXT)
+#  Changes from v4.0:
+#    - All main text labels changed to pure white for clarity
+#    - PowerShell console hidden via -NoProfile -WindowStyle Hidden
+#    - Delay reduced to 2 s so popup appears as first item after login
 # ══════════════════════════════════════════════════════════════════════════════
 Write-Step 'Creating ADVANCED post-logon reminder popup script (v4.1 — white text)'
 
@@ -587,7 +577,7 @@ $reminderPath    = Join-Path $Cfg_ScriptsDir 'BrightUI_LoginReminder.ps1'
 $reminderContent = @'
 # ============================================================
 #  BrightUI Technologies - Advanced Login Reminder Popup v4.1
-#  Triggered by: Startup shortcut (BrightUI_LoginReminder.lnk)
+#  Triggered by: BrightUI_LoginReminder scheduled task (at logon).
 #  Borderless custom form — draggable — auto-closes in 60 s.
 #  All text colours set to white (v4.1 fix).
 # ============================================================
@@ -728,7 +718,7 @@ $pSide.Add_Paint({
 })
 
 # Logo image in sidebar
-$logoPath = 'C:\ProgramData\BrightUI\Assets\brightui_logo.png'    # (unused – will be replaced)
+$logoPath = 'C:\ProgramData\BrightUI\Assets\brightui_logo.png'
 $logoBottom = 20
 if (Test-Path -LiteralPath $logoPath) {
     try {
@@ -968,42 +958,33 @@ $tmr.Stop(); $tmr.Dispose(); $frm.Dispose()
 
 $reminderContent = $reminderContent -replace '__COMPANY__', $Cfg_CompanyName
 $reminderContent = $reminderContent -replace '__DOMAIN__',  $Cfg_Domain
-$reminderContent = $reminderContent -replace 'C:\\ProgramData\\BrightUI\\Assets\\brightui_logo.png', $logoFilePath   # update logo path
 
 Set-Content -Path $reminderPath -Value $reminderContent -Encoding UTF8
 Write-OK "Advanced login reminder script saved: $reminderPath"
-
-# Create Startup shortcut for the reminder
-$startupDir = [Environment]::GetFolderPath('Startup')
-$reminderShortcut = Join-Path $startupDir 'BrightUI_LoginReminder.lnk'
-$WshShell = New-Object -ComObject WScript.Shell
-$Shortcut = $WshShell.CreateShortcut($reminderShortcut)
-$Shortcut.TargetPath = 'powershell.exe'
-$Shortcut.Arguments = "-WindowStyle Hidden -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$reminderPath`""
-$Shortcut.WorkingDirectory = $Cfg_ScriptsDir
-$Shortcut.Save()
-Write-OK "Login reminder shortcut placed in Startup: $reminderShortcut"
+Write-OK 'All popup text is white; PowerShell console stays hidden at logon.'
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  STEP 13 — Security Toggle Script  (legacy / manual admin use)
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Step 'Creating Security Toggle script (manual admin / task use)'
+Write-Step 'Creating Security Toggle script (for manual admin / task-triggered use)'
 
 $togglePath    = Join-Path $Cfg_ScriptsDir 'BrightUI_Toggle.ps1'
 $toggleContent = @"
 # ============================================================
 #  BrightUI Technologies - Security Toggle
 #  Accepts: -State (LOCKED|UNLOCKED|TOGGLE)
+#  For manual admin or scheduled-task use.
 # ============================================================
 param([string]`$State = 'TOGGLE')
 `$ErrorActionPreference = 'Stop'
 
 `$stateFile  = '$Cfg_StateFile'
 `$logFile    = '$Cfg_LogFile'
-`$usbPolPath = '$Cfg_UsbPolicyBase\$Cfg_UsbClassGuid'
-`$chromePath = 'HKCU:\Software\Policies\Google\Chrome'
-`$edgePath   = 'HKCU:\Software\Policies\Microsoft\Edge'
+`$usbStorReg = 'HKLM:\SYSTEM\CurrentControlSet\Services\USBSTOR'
+`$usbPolPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices\$Cfg_UsbClassGuid'
+`$chromePath = 'HKLM:\SOFTWARE\Policies\Google\Chrome'
+`$edgePath   = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
 `$domain     = '$Cfg_Domain'
 
 function Write-Log(`$msg) {
@@ -1012,18 +993,41 @@ function Write-Log(`$msg) {
 }
 
 function Enable-UsbStorage {
-    Write-Log "Enabling USB storage (user level)"
+    Write-Log "Enabling USB storage"
+    if (Test-Path -LiteralPath `$usbStorReg) {
+        Set-ItemProperty -Path `$usbStorReg -Name 'Start' -Value 3 -Type DWord }
     if (Test-Path -LiteralPath `$usbPolPath) {
         Set-ItemProperty -Path `$usbPolPath -Name 'Deny_Read'  -Value 0 -Type DWord
-        Set-ItemProperty -Path `$usbPolPath -Name 'Deny_Write' -Value 0 -Type DWord
-    }
+        Set-ItemProperty -Path `$usbPolPath -Name 'Deny_Write' -Value 0 -Type DWord }
+    try {
+        `$devices = Get-PnpDevice -Class USB -ErrorAction SilentlyContinue |
+            Where-Object { `$_.FriendlyName -match 'Mass Storage|USB Attached SCSI|USB Storage' -or
+                           `$_.CompatibleID -match 'USB\\\\Class_08' }
+        foreach (`$dev in `$devices) {
+            `$dev | Disable-PnpDevice -Confirm:`$false -ErrorAction SilentlyContinue | Out-Null
+            `$dev | Enable-PnpDevice  -Confirm:`$false -ErrorAction SilentlyContinue | Out-Null
+        }
+    } catch { Write-Log "Error re-enabling USB: `$(`$_.Exception.Message)" }
 }
+
 function Disable-UsbStorage {
-    Write-Log "Disabling USB storage (user level)"
-    if (-not (Test-Path -LiteralPath `$usbPolPath)) { New-Item -Path `$usbPolPath -Force | Out-Null }
+    Write-Log "Disabling USB storage"
+    if (Test-Path -LiteralPath `$usbStorReg) {
+        Set-ItemProperty -Path `$usbStorReg -Name 'Start' -Value 4 -Type DWord }
+    if (-not (Test-Path -LiteralPath `$usbPolPath)) {
+        New-Item -Path `$usbPolPath -Force | Out-Null }
     Set-ItemProperty -Path `$usbPolPath -Name 'Deny_Read'  -Value 1 -Type DWord
     Set-ItemProperty -Path `$usbPolPath -Name 'Deny_Write' -Value 1 -Type DWord
+    try {
+        `$devices = Get-PnpDevice -Class USB -ErrorAction SilentlyContinue |
+            Where-Object { `$_.FriendlyName -match 'Mass Storage|USB Attached SCSI|USB Storage' -or
+                           `$_.CompatibleID -match 'USB\\\\Class_08' }
+        foreach (`$dev in `$devices) {
+            `$dev | Disable-PnpDevice -Confirm:`$false -ErrorAction SilentlyContinue | Out-Null
+        }
+    } catch { }
 }
+
 function Remove-DomainRestrictions {
     Write-Log "Removing browser domain restrictions"
     `$keys = @('AllowedDomainsForApps','RestrictSigninToPattern','BrowserSignin','SecondaryGoogleAccountSigninAllowed')
@@ -1031,6 +1035,7 @@ function Remove-DomainRestrictions {
     Remove-ItemProperty -Path `$edgePath -Name 'RestrictSigninToPattern' -ErrorAction SilentlyContinue
     Remove-ItemProperty -Path `$edgePath -Name 'BrowserSignin'           -ErrorAction SilentlyContinue
 }
+
 function Apply-DomainRestrictions {
     Write-Log "Applying domain restrictions"
     if (-not (Test-Path -LiteralPath `$chromePath)) { New-Item -Path `$chromePath -Force | Out-Null }
@@ -1045,19 +1050,26 @@ function Apply-DomainRestrictions {
 
 `$current = 'LOCKED'
 if (Test-Path -LiteralPath `$stateFile) {
-    try { `$current = (Get-Content `$stateFile -Raw -ErrorAction Stop).Trim().ToUpper() } catch {}
+    try { `$current = (Get-Content `$stateFile -Raw -ErrorAction Stop).Trim().ToUpper() }
+    catch { `$current = 'LOCKED' }
 }
+
 `$target = `$State.ToUpper()
 if (`$target -eq 'TOGGLE') { `$target = if (`$current -eq 'LOCKED') { 'UNLOCKED' } else { 'LOCKED' } }
+
 if (`$target -eq `$current) {
     Write-Log "Already in `$target state — no action"
+    try { & gpupdate.exe /force /quiet 2>`$null } catch {}
     exit 0
 }
+
 Write-Log "Switching from `$current to `$target"
 if (`$target -eq 'UNLOCKED') { Enable-UsbStorage; Remove-DomainRestrictions }
 else                          { Disable-UsbStorage; Apply-DomainRestrictions }
+
 Set-Content -Path `$stateFile -Value `$target -Force -Encoding UTF8
 Write-Log "State updated to `$target"
+try { & gpupdate.exe /force /quiet 2>`$null } catch {}
 "@
 
 Set-Content -Path $togglePath -Value $toggleContent -Encoding UTF8
@@ -1065,87 +1077,170 @@ Write-OK "Toggle script saved: $togglePath"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STEP 13A — Dedicated LOCK Script  (v4.2 – user‑mode with self‑elevation)
+#  STEP 13A — Dedicated LOCK Script  (v4.2 — self-elevation + immediate block)
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Step 'Creating dedicated BrightUI_Lock.ps1 (v4.2)'
+Write-Step 'Creating dedicated BrightUI_Lock.ps1 (v4.2 — immediate USB block & browser close)'
 
 $lockScriptContent = @'
 # ============================================================
 #  BrightUI Technologies - Security Lock Script  v4.2
+#  Called silently by the hotkey listener when LOCK is triggered.
+#  Disables USB storage, applies domain restrictions, updates state.
+#  New: self-elevation, stops USBSTOR service, disables all
+#       connected USB disks, terminates browsers for immediate effect.
 # ============================================================
+
+# ── Self-elevation to administrator ───────────────────────────────────────────
 if (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
     $arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$($MyInvocation.MyCommand.Path)`""
     Start-Process PowerShell.exe -Verb RunAs -ArgumentList $arguments
     exit 0
 }
+
 $ErrorActionPreference = 'Continue'
 
 $stateFile  = '__STATE_FILE__'
 $logFile    = '__LOG_FILE__'
 $usbStorReg = 'HKLM:\SYSTEM\CurrentControlSet\Services\USBSTOR'
-$usbPolPath = '__USB_POL_PATH__'
-$chromePath = 'HKCU:\Software\Policies\Google\Chrome'
-$edgePath   = 'HKCU:\Software\Policies\Microsoft\Edge'
+$usbPolPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices\{__USB_GUID__}'
+$chromePath = 'HKLM:\SOFTWARE\Policies\Google\Chrome'
+$edgePath   = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
 $domain     = '__DOMAIN__'
 
 function Write-Log([string]$msg) {
-    try { Add-Content -Path $logFile -Value "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [LOCK] $msg" -Encoding UTF8 } catch {}
+    try {
+        $line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [LOCK] $msg"
+        Add-Content -Path $logFile -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue
+    } catch {}
 }
 
 Write-Log "Lock script started (v4.2)"
+
+# ── Check current state ───────────────────────────────────────────────────────
 $currentState = 'LOCKED'
-try { if (Test-Path $stateFile) { $currentState = (Get-Content $stateFile -Raw).Trim().ToUpper() } } catch {}
-if ($currentState -eq 'LOCKED') { Write-Log "Already LOCKED"; exit 0 }
-
-# 1. Stop USBSTOR service (needs admin)
-try { Stop-Service USBSTOR -Force -ErrorAction SilentlyContinue; Write-Log "USBSTOR stopped" } catch {}
-if (Test-Path $usbStorReg) { Set-ItemProperty -Path $usbStorReg -Name 'Start' -Value 4 -Type DWord; Write-Log "USBSTOR Start=4" }
-
-# 2. Disable USB mass storage devices (PnP)
 try {
-    Get-PnpDevice -Class USB -ErrorAction SilentlyContinue | Where-Object { $_.FriendlyName -match 'Mass Storage|USB Attached SCSI|USB Storage' } | ForEach-Object {
-        $_ | Disable-PnpDevice -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
-        Write-Log "Disabled device: $($_.FriendlyName)"
+    if (Test-Path -LiteralPath $stateFile) {
+        $currentState = (Get-Content $stateFile -Raw -ErrorAction Stop).Trim().ToUpper()
     }
-} catch {}
+} catch { }
 
-# 3. Apply user‑level USB block
-if (-not (Test-Path $usbPolPath)) { New-Item -Path $usbPolPath -Force | Out-Null }
-Set-ItemProperty -Path $usbPolPath -Name 'Deny_Read'  -Value 1 -Type DWord
-Set-ItemProperty -Path $usbPolPath -Name 'Deny_Write' -Value 1 -Type DWord
+if ($currentState -eq 'LOCKED') {
+    Write-Log "Already LOCKED — no action needed"
+    exit 0
+}
 
-# 4. Browser restrictions (HKCU)
-if (-not (Test-Path $chromePath)) { New-Item -Path $chromePath -Force | Out-Null }
-Set-ItemProperty -Path $chromePath -Name 'AllowedDomainsForApps'               -Value $domain     -Type String
-Set-ItemProperty -Path $chromePath -Name 'RestrictSigninToPattern'             -Value "*@$domain" -Type String
-Set-ItemProperty -Path $chromePath -Name 'BrowserSignin'                       -Value 1            -Type DWord
-Set-ItemProperty -Path $chromePath -Name 'SecondaryGoogleAccountSigninAllowed' -Value 0            -Type DWord
-if (-not (Test-Path $edgePath)) { New-Item -Path $edgePath -Force | Out-Null }
-Set-ItemProperty -Path $edgePath -Name 'RestrictSigninToPattern' -Value "*@$domain" -Type String
-Set-ItemProperty -Path $edgePath -Name 'BrowserSignin'           -Value 1            -Type DWord
-Write-Log "Browser restrictions applied"
+# ── 1. Stop USBSTOR service and disable driver (immediate effect) ─────────────
+try {
+    $svc = Get-Service -Name USBSTOR -ErrorAction SilentlyContinue
+    if ($svc -and $svc.Status -ne 'Stopped') {
+        Stop-Service -Name USBSTOR -Force -ErrorAction SilentlyContinue
+        Write-Log "USBSTOR service stopped"
+    }
+    if (Test-Path -LiteralPath $usbStorReg) {
+        Set-ItemProperty -Path $usbStorReg -Name 'Start' -Value 4 -Type DWord
+        Write-Log "USBSTOR driver disabled (Start=4)"
+    }
+} catch { Write-Log "Error disabling USBSTOR: $($_.Exception.Message)" }
 
-# 5. Close browsers
-Get-Process -Name chrome,msedge -ErrorAction SilentlyContinue | Stop-Process -Force
+# ── 2. Disable all connected USB mass‑storage devices ─────────────────────────
+try {
+    $usbDisks = Get-CimInstance -ClassName Win32_DiskDrive -ErrorAction SilentlyContinue |
+        Where-Object { $_.InterfaceType -eq 'USB' }
+    foreach ($disk in $usbDisks) {
+        $pnpDev = Get-PnpDevice -ErrorAction SilentlyContinue |
+            Where-Object { $_.InstanceId -eq $disk.PNPDeviceID }
+        if ($pnpDev) {
+            $pnpDev | Disable-PnpDevice -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+            Write-Log "Disabled USB disk: $($disk.Model) ($($disk.DeviceID))"
+        }
+    }
+    # Also try matching by class/friendly name (fallback)
+    $extraDevs = Get-PnpDevice -Class USB -ErrorAction SilentlyContinue |
+        Where-Object { $_.FriendlyName -match 'Mass Storage|USB Attached SCSI|USB Storage' }
+    foreach ($dev in $extraDevs) {
+        if ($dev.Status -ne 'Disabled') {
+            $dev | Disable-PnpDevice -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+            Write-Log "Disabled USB device (extra): $($dev.FriendlyName)"
+        }
+    }
+    Write-Log "All USB mass‑storage devices disabled"
+} catch { Write-Log "PnP disable error: $($_.Exception.Message)" }
 
-# 6. State file
-Set-Content -Path $stateFile -Value 'LOCKED' -Force -Encoding UTF8
-Write-Log "Lock completed"
+# ── 3. Apply Group Policy USB block (registry) ────────────────────────────────
+try {
+    if (-not (Test-Path -LiteralPath $usbPolPath)) {
+        New-Item -Path $usbPolPath -Force | Out-Null
+    }
+    Set-ItemProperty -Path $usbPolPath -Name 'Deny_Read'  -Value 1 -Type DWord
+    Set-ItemProperty -Path $usbPolPath -Name 'Deny_Write' -Value 1 -Type DWord
+    Write-Log "USB Group Policy block applied"
+} catch { Write-Log "Error applying USB GP: $($_.Exception.Message)" }
+
+# ── 4. Apply Chrome domain restrictions ──────────────────────────────────────
+try {
+    if (-not (Test-Path -LiteralPath $chromePath)) {
+        New-Item -Path $chromePath -Force | Out-Null
+    }
+    Set-ItemProperty -Path $chromePath -Name 'AllowedDomainsForApps'               -Value $domain     -Type String
+    Set-ItemProperty -Path $chromePath -Name 'RestrictSigninToPattern'             -Value "*@$domain" -Type String
+    Set-ItemProperty -Path $chromePath -Name 'BrowserSignin'                       -Value 1            -Type DWord
+    Set-ItemProperty -Path $chromePath -Name 'SecondaryGoogleAccountSigninAllowed' -Value 0            -Type DWord
+    Write-Log "Chrome restrictions applied (only @$domain allowed)"
+} catch { Write-Log "Error applying Chrome restrictions: $($_.Exception.Message)" }
+
+# ── 5. Apply Edge domain restrictions ────────────────────────────────────────
+try {
+    if (-not (Test-Path -LiteralPath $edgePath)) {
+        New-Item -Path $edgePath -Force | Out-Null
+    }
+    Set-ItemProperty -Path $edgePath -Name 'RestrictSigninToPattern' -Value "*@$domain" -Type String
+    Set-ItemProperty -Path $edgePath -Name 'BrowserSignin'           -Value 1            -Type DWord
+    Write-Log "Edge restrictions applied (only @$domain allowed)"
+} catch { Write-Log "Error applying Edge restrictions: $($_.Exception.Message)" }
+
+# ── 6. Force browsers to close so new policies take effect immediately ────────
+try {
+    $chromeProcs = Get-Process -Name "chrome" -ErrorAction SilentlyContinue
+    if ($chromeProcs) {
+        $chromeProcs | Stop-Process -Force -ErrorAction SilentlyContinue
+        Write-Log "Closed Chrome to enforce domain restriction"
+    }
+    $edgeProcs = Get-Process -Name "msedge" -ErrorAction SilentlyContinue
+    if ($edgeProcs) {
+        $edgeProcs | Stop-Process -Force -ErrorAction SilentlyContinue
+        Write-Log "Closed Edge to enforce domain restriction"
+    }
+} catch { Write-Log "Note: browser close error: $($_.Exception.Message)" }
+
+# ── 7. Update state file ──────────────────────────────────────────────────────
+try {
+    Set-Content -Path $stateFile -Value 'LOCKED' -Force -Encoding UTF8
+    Write-Log "State file updated to LOCKED"
+} catch { Write-Log "Error updating state file: $($_.Exception.Message)" }
+
+# ── 8. Force Group Policy refresh (changes take effect for future sessions) ───
+try {
+    & gpupdate.exe /force /quiet 2>$null
+    Write-Log "Group Policy refreshed"
+} catch { Write-Log "gpupdate note: $($_.Exception.Message)" }
+
+Write-Log "Lock script completed successfully — system is now LOCKED"
 '@
 
 $lockScriptContent = $lockScriptContent -replace '__STATE_FILE__', $Cfg_StateFile
 $lockScriptContent = $lockScriptContent -replace '__LOG_FILE__', $Cfg_LogFile
-$lockScriptContent = $lockScriptContent -replace '__USB_POL_PATH__', ($Cfg_UsbPolicyBase + '\' + $Cfg_UsbClassGuid)
+$lockScriptContent = $lockScriptContent -replace '__USB_GUID__', $Cfg_UsbClassGuid
 $lockScriptContent = $lockScriptContent -replace '__DOMAIN__', $Cfg_Domain
 
 Set-Content -Path $Cfg_LockScriptPath -Value $lockScriptContent -Encoding UTF8
-Write-OK "Lock script saved: $Cfg_LockScriptPath"
+Write-OK "Lock script (v4.2) saved: $Cfg_LockScriptPath"
+Write-OK 'Self-elevation, immediate USB block, browser termination, domain restrictions.'
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STEP 13B — Dedicated UNLOCK Script  (v5.2 – full unlock, self‑elevation)
+#  STEP 13B — Dedicated UNLOCK Script  (v5.2 — ensures drives appear in Explorer)
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Step 'Creating dedicated BrightUI_Unlock.ps1 (v5.2)'
+Write-Step 'Creating dedicated BrightUI_Unlock.ps1 (v5.2 — USB unlock + online all disks)'
 
 $unlockScriptContent = @'
 <#
@@ -1155,10 +1250,13 @@ $unlockScriptContent = @'
     Removes every known Group Policy / registry restriction that blocks USB mass storage,
     removes sign‑in restrictions for Chrome/Edge, brings all USB disks online,
     and forces immediate hardware rediscovery.
+    Designed to run silently from a hotkey listener.
 .NOTES
-    Version 5.2
+    Version 5.2 – Added automatic disk online + volume mount.
+                  WriteProtect reset, DeviceInstall cleanup, USB hub restart.
 #>
 
+# ── Self‑elevation to administrator ───────────────────────────────────────────
 if (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
     $arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$($MyInvocation.MyCommand.Path)`""
     Start-Process PowerShell.exe -Verb RunAs -ArgumentList $arguments
@@ -1167,128 +1265,275 @@ if (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdent
 
 $ErrorActionPreference = 'Continue'
 
-$logDir = '__ROOT_DIR__'
-if (-not (Test-Path $logDir)) { New-Item -Path $logDir -ItemType Directory -Force | Out-Null }
+# ── Ensure log directory exists ───────────────────────────────────────────────
+$logDir = 'C:\ProgramData\BrightUI'
+if (-not (Test-Path -LiteralPath $logDir)) {
+    New-Item -Path $logDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
+}
 
 $stateFile      = "$logDir\toggle_state.txt"
 $logFile        = "$logDir\hotkey_log.txt"
 $usbStorReg     = 'HKLM:\SYSTEM\CurrentControlSet\Services\USBSTOR'
 $storagePol     = 'HKLM:\SYSTEM\CurrentControlSet\Control\StorageDevicePolicies'
 $remStorBase    = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices'
-$remDiskGuid    = '{53f5630d-b6bf-11d0-94f2-00a0c91efb8b}'
+$remDiskGuid    = '{53f5630d-b6bf-11d0-94f2-00a0c91efb8b}'   # Correct Removable Disks GUID
 $deviceRestrict = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall\Restrictions'
-$chromePath     = 'HKCU:\Software\Policies\Google\Chrome'
-$edgePath       = 'HKCU:\Software\Policies\Microsoft\Edge'
-$usbPolPathUser = '__USB_POL_PATH__'
+$chromePath     = 'HKLM:\SOFTWARE\Policies\Google\Chrome'
+$edgePath       = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
 
 function Write-Log([string]$msg) {
-    try { Add-Content -Path $logFile -Value "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [UNLOCK] $msg" -Encoding UTF8 } catch {}
+    try {
+        $line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [UNLOCK] $msg"
+        Add-Content -Path $logFile -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue
+    } catch {}
 }
 
 Write-Log "Unlock script started (v5.2)"
 
-# Check state
+# ── Check current state ───────────────────────────────────────────────────────
 $currentState = 'LOCKED'
-try { if (Test-Path $stateFile) { $currentState = (Get-Content $stateFile -Raw).Trim().ToUpper() } } catch {}
-if ($currentState -eq 'UNLOCKED') { Write-Log "Already UNLOCKED"; exit 0 }
-
-# 1. Enable USBSTOR driver
-if (Test-Path $usbStorReg) {
-    Set-ItemProperty -Path $usbStorReg -Name 'Start' -Value 3 -Type DWord
-    Write-Log "USBSTOR Start=3"
-}
-try { Start-Service USBSTOR -ErrorAction SilentlyContinue } catch {}
-
-# 2. WriteProtect
-Set-ItemProperty -Path $storagePol -Name 'WriteProtect' -Value 0 -Type DWord -ErrorAction SilentlyContinue
-
-# 3. Removable storage policies (system)
-Set-ItemProperty -Path $remStorBase -Name 'Deny_All' -Value 0 -Type DWord -ErrorAction SilentlyContinue
-$remDiskPath = Join-Path $remStorBase $remDiskGuid
-if (-not (Test-Path $remDiskPath)) { New-Item -Path $remDiskPath -Force | Out-Null }
-Set-ItemProperty -Path $remDiskPath -Name 'Deny_Read'  -Value 0 -Type DWord
-Set-ItemProperty -Path $remDiskPath -Name 'Deny_Write' -Value 0 -Type DWord
-Get-ChildItem -Path $remStorBase -ErrorAction SilentlyContinue | ForEach-Object {
-    'Deny_Read','Deny_Write','Deny_All' | ForEach-Object { Remove-ItemProperty -Path $_.PSPath -Name $_ -ErrorAction SilentlyContinue }
-}
-
-# 4. DeviceInstall restrictions
-'DenyRemovableDevices','DenyUnspecified','DenyDeviceIDs','DenyDeviceClasses','DenyDeviceInstanceIDs','DenyAll' | ForEach-Object {
-    Remove-ItemProperty -Path $deviceRestrict -Name $_ -ErrorAction SilentlyContinue
-}
-
-# 5. Re-enable USB devices
-Get-PnpDevice -Class USB -ErrorAction SilentlyContinue | Where-Object { $_.FriendlyName -match 'Mass Storage|USB Attached SCSI|USB Storage' } | ForEach-Object {
-    $_ | Enable-PnpDevice -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
-}
-
-# 6. Restart USB hubs
-Get-PnpDevice -Class USB -FriendlyName '*Root Hub*' -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'OK' } | ForEach-Object {
-    $_ | Disable-PnpDevice -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
-    Start-Sleep -Milliseconds 500
-    $_ | Enable-PnpDevice  -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
-}
-pnputil.exe /scan-devices > $null 2>&1
-
-# 7. Online all USB disks
 try {
-    Set-Service ShellHWDetection -StartupType Manual -ErrorAction SilentlyContinue
-    Start-Service ShellHWDetection -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $stateFile) {
+        $currentState = (Get-Content $stateFile -Raw -ErrorAction Stop).Trim().ToUpper()
+    }
 } catch {}
+if ($currentState -eq 'UNLOCKED') {
+    Write-Log "Already UNLOCKED — no action needed"
+    exit 0
+}
+
+# ── 1. Enable USBSTOR driver and start the service ────────────────────────────
+try {
+    if (Test-Path -LiteralPath $usbStorReg) {
+        Set-ItemProperty -Path $usbStorReg -Name 'Start' -Value 3 -Type DWord
+        Write-Log "USBSTOR driver enabled (Start=3)"
+    }
+    $svc = Get-Service -Name USBSTOR -ErrorAction SilentlyContinue
+    if ($svc -and $svc.Status -ne 'Running') {
+        Start-Service -Name USBSTOR -ErrorAction SilentlyContinue
+        Write-Log "USBSTOR service started"
+    }
+} catch { Write-Log "Error enabling USBSTOR: $($_.Exception.Message)" }
+
+# ── 2. Remove WriteProtect (forces read‑only on all USB drives) ──────────────
+try {
+    Set-ItemProperty -Path $storagePol -Name 'WriteProtect' -Value 0 -Type DWord -ErrorAction SilentlyContinue
+    Write-Log "WriteProtect reset to 0"
+} catch { Write-Log "WriteProtect note: $($_.Exception.Message)" }
+
+# ── 3. Clear all removable storage Group Policy blocks ────────────────────────
+# 3a. Deny_All (all classes)
+try {
+    Set-ItemProperty -Path $remStorBase -Name 'Deny_All' -Value 0 -Type DWord -ErrorAction SilentlyContinue
+    Write-Log "Deny_All reset to 0"
+} catch { Write-Log "Deny_All error: $_" }
+
+# 3b. Correct Removable Disks GUID (Deny_Read / Deny_Write)
+$remDiskPath = Join-Path $remStorBase $remDiskGuid
+try {
+    if (-not (Test-Path -LiteralPath $remDiskPath)) {
+        New-Item -Path $remDiskPath -Force -ErrorAction SilentlyContinue | Out-Null
+    }
+    Set-ItemProperty -Path $remDiskPath -Name 'Deny_Read'  -Value 0 -Type DWord -ErrorAction SilentlyContinue
+    Set-ItemProperty -Path $remDiskPath -Name 'Deny_Write' -Value 0 -Type DWord -ErrorAction SilentlyContinue
+    Write-Log "Removable Disks policy reset (Deny_Read=0, Deny_Write=0)"
+} catch { Write-Log "Error resetting removable disk policy: $($_.Exception.Message)" }
+
+# 3c. Sweep all subkeys (CD‑ROM, WPD, etc.) to remove any leftover Deny_*
+try {
+    Get-ChildItem -Path $remStorBase -ErrorAction SilentlyContinue | ForEach-Object {
+        $props = @('Deny_Read','Deny_Write','Deny_All')
+        foreach ($p in $props) {
+            Remove-ItemProperty -Path $_.PSPath -Name $p -ErrorAction SilentlyContinue
+        }
+    }
+    Write-Log "Swept remaining RemovableStorageDevices subkeys"
+} catch { Write-Log "Sweep error: $_" }
+
+# ── 4. Completely remove device installation restrictions ─────────────────────
+#    (DenyDeviceIDs can block specific USB VID/PID, DenyDeviceClasses can block
+#     the entire USB mass storage class {36FC9E60...}, etc.)
+try {
+    $restrictiveValues = @(
+        'DenyRemovableDevices',
+        'DenyUnspecified',
+        'DenyDeviceIDs',
+        'DenyDeviceClasses',
+        'DenyDeviceInstanceIDs',
+        'DenyAll'
+    )
+    foreach ($val in $restrictiveValues) {
+        # Remove the property entirely (best way to clear the policy)
+        Remove-ItemProperty -Path $deviceRestrict -Name $val -ErrorAction SilentlyContinue
+    }
+    Write-Log "All DeviceInstall restriction values removed"
+} catch { Write-Log "DeviceInstall cleanup error: $($_.Exception.Message)" }
+
+# ── 5. Re‑enable USB mass‑storage devices via PnP ─────────────────────────────
+try {
+    $disabledUsbDevices = Get-PnpDevice -Class USB -ErrorAction SilentlyContinue |
+        Where-Object { $_.Status -eq 'Disabled' -and (
+            $_.FriendlyName -match 'Mass Storage|USB Attached SCSI|USB Storage' -or
+            $_.CompatibleID  -match 'USB\\\\Class_08'
+        )}
+    foreach ($dev in $disabledUsbDevices) {
+        $dev | Enable-PnpDevice -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+        Write-Log "Enabled USB device: $($dev.FriendlyName)"
+    }
+    # Fallback: enable any matching device regardless of status
+    Get-PnpDevice -Class USB -ErrorAction SilentlyContinue |
+        Where-Object { $_.FriendlyName -match 'Mass Storage|USB Attached SCSI|USB Storage' -or
+                       $_.CompatibleID  -match 'USB\\\\Class_08' } |
+        Where-Object { $_.Status -ne 'Enabled' } |
+        ForEach-Object {
+            $_ | Enable-PnpDevice -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+            Write-Log "Enabled (fallback): $($_.FriendlyName)"
+        }
+    Write-Log "PnP USB devices re‑enabled"
+} catch { Write-Log "PnP re‑enable error: $($_.Exception.Message)" }
+
+# ── 6. Restart USB hub(s) so already‑plugged devices are rediscovered ─────────
+try {
+    Get-PnpDevice -Class USB -FriendlyName '*Root Hub*' -ErrorAction SilentlyContinue |
+        Where-Object { $_.Status -eq 'OK' } |
+        ForEach-Object {
+            $_ | Disable-PnpDevice -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+            Start-Sleep -Milliseconds 500
+            $_ | Enable-PnpDevice  -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+            Write-Log "Cycled USB hub: $($_.FriendlyName)"
+        }
+} catch { Write-Log "Hub restart error: $_" }
+
+# ── 7. Force hardware scan (final rediscovery) ────────────────────────────────
+try {
+    pnputil.exe /scan-devices > $null 2>&1
+    Write-Log "Hardware rescan issued"
+} catch { Write-Log "pnputil scan note: $_" }
+
+# ── 8. NEW: Bring all USB disks online and mount volumes ──────────────────────
+Write-Log "Bringing USB disks online and mounting volumes..."
+
+# 8a. Start Shell Hardware Detection service (may be disabled)
+try {
+    Set-Service -Name ShellHWDetection -StartupType Manual -ErrorAction SilentlyContinue
+    Start-Service -Name ShellHWDetection -ErrorAction SilentlyContinue
+    Write-Log "ShellHWDetection service started"
+} catch { Write-Log "ShellHWDetection service note: $($_.Exception.Message)" }
+
+# 8b. Online all USB disks and remove read‑only flag
 $usbDisks = Get-Disk | Where-Object { $_.BusType -eq 'USB' }
 if (-not $usbDisks) {
-    Get-CimInstance -ClassName Win32_DiskDrive | Where-Object { $_.InterfaceType -eq 'USB' } | ForEach-Object {
-        $d = Get-Disk -Number $_.Index -ErrorAction SilentlyContinue
-        if ($d) { $usbDisks += $d }
+    # Fallback: try to find USB disks via CIM
+    $usbCimDisks = Get-CimInstance -ClassName Win32_DiskDrive |
+        Where-Object { $_.InterfaceType -eq 'USB' }
+    foreach ($cimDisk in $usbCimDisks) {
+        $diskNum = ($cimDisk.Index -as [int])
+        $disk    = Get-Disk -Number $diskNum -ErrorAction SilentlyContinue
+        if ($disk) { $usbDisks += $disk }
     }
 }
+
 foreach ($disk in $usbDisks) {
-    if ($disk.IsOffline) { Set-Disk -InputObject $disk -IsOffline $false }
-    if ($disk.IsReadOnly) { Set-Disk -InputObject $disk -IsReadOnly $false }
-    Get-Partition -DiskNumber $disk.Number -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter -eq $null -and $_.Type -ne 'Unknown' } | ForEach-Object {
-        try { Set-Partition -InputObject $_ -NewDriveLetter ([char]::MinValue) -ErrorAction Stop } catch {}
+    try {
+        if ($disk.IsOffline) {
+            Set-Disk -InputObject $disk -IsOffline $false
+            Write-Log "Disk $($disk.Number) brought online"
+        }
+        if ($disk.IsReadOnly) {
+            Set-Disk -InputObject $disk -IsReadOnly $false
+            Write-Log "Disk $($disk.Number) made writable"
+        }
+        # Mount any partition without a drive letter
+        $partitions = Get-Partition -DiskNumber $disk.Number -ErrorAction SilentlyContinue |
+            Where-Object { $_.DriveLetter -eq $null -and $_.Type -ne 'Unknown' }
+        foreach ($part in $partitions) {
+            $assigned = $false
+            # Try to assign a letter automatically
+            try {
+                Set-Partition -InputObject $part -NewDriveLetter ([char]::MinValue) -ErrorAction Stop
+                # The above assigns the next available letter
+                Write-Log "Partition $($part.PartitionNumber) on disk $($disk.Number) received a drive letter"
+                $assigned = $true
+            } catch {}
+            if (-not $assigned) {
+                # Manual fallback: choose first free letter
+                $freeLetters = 67..90 | ForEach-Object { [char]$_ } |
+                    Where-Object { -not (Get-PSDrive -Name $_ -ErrorAction SilentlyContinue) }
+                if ($freeLetters) {
+                    $letter = $freeLetters[0]
+                    try { Set-Partition -InputObject $part -NewDriveLetter $letter -ErrorAction Stop; Write-Log "Assigned drive $letter to partition $($part.PartitionNumber)" } catch {}
+                }
+            }
+        }
+    } catch { Write-Log "Error processing disk $($disk.Number): $($_.Exception.Message)" }
+}
+
+Write-Log "USB disk online/mount procedure completed"
+
+# ── 9. Remove Chrome domain restrictions ──────────────────────────────────────
+try {
+    $keys = @('AllowedDomainsForApps','RestrictSigninToPattern','BrowserSignin','SecondaryGoogleAccountSigninAllowed')
+    foreach ($k in $keys) {
+        Remove-ItemProperty -Path $chromePath -Name $k -ErrorAction SilentlyContinue
     }
-}
-Write-Log "USB disks brought online and mounted"
+    Write-Log "Chrome restrictions removed"
+} catch { Write-Log "Error removing Chrome restrictions: $($_.Exception.Message)" }
 
-# 8. Clear user‑level USB block
-Set-ItemProperty -Path $usbPolPathUser -Name 'Deny_Read'  -Value 0 -Type DWord -ErrorAction SilentlyContinue
-Set-ItemProperty -Path $usbPolPathUser -Name 'Deny_Write' -Value 0 -Type DWord -ErrorAction SilentlyContinue
+# ── 10. Remove Edge domain restrictions ───────────────────────────────────────
+try {
+    Remove-ItemProperty -Path $edgePath -Name 'RestrictSigninToPattern' -ErrorAction SilentlyContinue
+    Remove-ItemProperty -Path $edgePath -Name 'BrowserSignin'           -ErrorAction SilentlyContinue
+    Write-Log "Edge restrictions removed"
+} catch { Write-Log "Error removing Edge restrictions: $($_.Exception.Message)" }
 
-# 9. Remove browser restrictions
-'AllowedDomainsForApps','RestrictSigninToPattern','BrowserSignin','SecondaryGoogleAccountSigninAllowed' | ForEach-Object {
-    Remove-ItemProperty -Path $chromePath -Name $_ -ErrorAction SilentlyContinue
-}
-Remove-ItemProperty -Path $edgePath -Name 'RestrictSigninToPattern' -ErrorAction SilentlyContinue
-Remove-ItemProperty -Path $edgePath -Name 'BrowserSignin'           -ErrorAction SilentlyContinue
+# ── 11. Update state file ─────────────────────────────────────────────────────
+try {
+    Set-Content -Path $stateFile -Value 'UNLOCKED' -Force -Encoding UTF8
+    Write-Log "State file updated to UNLOCKED"
+} catch { Write-Log "Error updating state file: $($_.Exception.Message)" }
 
-# 10. State file
-Set-Content -Path $stateFile -Value 'UNLOCKED' -Force -Encoding UTF8
-Write-Log "Unlock completed"
+# ── 12. Refresh Group Policy ──────────────────────────────────────────────────
+try {
+    gpupdate.exe /force /quiet 2>$null
+    Write-Log "Group Policy refreshed"
+} catch { Write-Log "gpupdate note: $($_.Exception.Message)" }
+
+Write-Log "Unlock script completed successfully"
 '@
-
-$unlockScriptContent = $unlockScriptContent -replace '__ROOT_DIR__', $Cfg_RootDir
-$unlockScriptContent = $unlockScriptContent -replace '__USB_POL_PATH__', ($Cfg_UsbPolicyBase + '\' + $Cfg_UsbClassGuid)
 
 Set-Content -Path $Cfg_UnlockScriptPath -Value $unlockScriptContent -Encoding UTF8
 Write-OK "Unlock script (v5.2) saved: $Cfg_UnlockScriptPath"
+Write-OK 'USB unlock, WriteProtect reset, DeviceInstall cleanup, disk online & mount, hub restart.'
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STEP 14 — Security Hotkey Listener (user‑level)
+#  STEP 14 — FIXED Security Hotkey Listener  (v4.2 — UAC prompt on hotkey)
+#
+#  The listener now runs as BUILTIN\Users (limited) and uses
+#  UseShellExecute + Verb "runas" to launch the lock/unlock scripts.
+#  This guarantees a UAC consent dialog every time a hotkey is pressed.
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Step 'Creating Hotkey Listener (user‑level)'
+Write-Step 'Creating Hotkey Listener v4.2 (limited user, UAC prompt via runas)'
 
 $listenerPath    = Join-Path $Cfg_ScriptsDir 'BrightUI_HotkeyListener.ps1'
-$listenerContent = @"
+$listenerContent = @'
 # ============================================================
-#  BrightUI Hotkey Listener – user mode
+#  BrightUI Technologies - Security Hotkey Listener  v4.2
+#  Runs at logon for BUILTIN\Users (limited).
+#
+#  When a hotkey is pressed, the listener launches the
+#  appropriate script with elevated privileges (UAC prompt).
+#  All events are logged to  C:\ProgramData\BrightUI\hotkey_log.txt
 # ============================================================
-Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-`$mutex = New-Object System.Threading.Mutex(`$false, 'Global\BrightUI_HotkeyListener_Mutex')
-if (-not `$mutex.WaitOne(0, `$false)) { exit }
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
 
-Add-Type -TypeDefinition @'
+# Single-instance guard
+$mutexName = 'Global\BrightUI_HotkeyListener_v42_Mutex'
+$mutex     = New-Object System.Threading.Mutex($false, $mutexName)
+if (-not $mutex.WaitOne(0, $false)) { exit }
+
+$csharpCode = @"
 using System;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
@@ -1297,151 +1542,429 @@ using System.IO;
 using System.Diagnostics;
 
 public class BrightUIHotkeyForm : Form {
-    [DllImport("user32.dll")]
+
+    [DllImport("user32.dll", SetLastError = true)]
     private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
-    [DllImport("user32.dll")]
+
+    [DllImport("user32.dll", SetLastError = true)]
     private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
-    private const int WM_HOTKEY = 0x0312;
-    private const uint MOD_ALT = 0x0001, MOD_CONTROL = 0x0002, MOD_NOREPEAT = 0x4000;
-    private const uint VK_L = 0x4C, VK_U = 0x55;
-    private const int HOTKEY_LOCK = 9001, HOTKEY_UNLOCK = 9002;
+    private const int  WM_HOTKEY    = 0x0312;
+    private const uint MOD_ALT      = 0x0001;
+    private const uint MOD_CONTROL  = 0x0002;
+    private const uint MOD_NOREPEAT = 0x4000;
+    private const uint VK_L = 0x4C;
+    private const uint VK_U = 0x55;
+    private const int HOTKEY_LOCK   = 9001;
+    private const int HOTKEY_UNLOCK = 9002;
 
-    private readonly string _stateFile, _logFile, _lockScript, _unlockScript;
+    private readonly string _stateFile;
+    private readonly string _logFile;
+    private readonly string _lockScriptPath;
+    private readonly string _unlockScriptPath;
 
-    public BrightUIHotkeyForm(string sf, string lf, string ls, string us) {
-        _stateFile=sf; _logFile=lf; _lockScript=ls; _unlockScript=us;
-        ShowInTaskbar=false; WindowState=FormWindowState.Minimized;
-        FormBorderStyle=FormBorderStyle.None; Size=new Size(1,1); Opacity=0;
+    public BrightUIHotkeyForm(string stateFilePath, string logFilePath,
+                               string lockScriptPath, string unlockScriptPath) {
+        _stateFile        = stateFilePath;
+        _logFile          = logFilePath;
+        _lockScriptPath   = lockScriptPath;
+        _unlockScriptPath = unlockScriptPath;
+
+        ShowInTaskbar   = false;
+        WindowState     = FormWindowState.Minimized;
+        FormBorderStyle = FormBorderStyle.None;
+        Size            = new Size(1, 1);
+        Opacity         = 0;
     }
 
-    private void Log(string msg) { try { File.AppendAllText(_logFile, "["+DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")+"] "+msg+Environment.NewLine); } catch {} }
+    private void Log(string msg) {
+        try {
+            string timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            string line      = "[" + timestamp + "] " + msg;
+            File.AppendAllText(_logFile, line + Environment.NewLine,
+                               System.Text.Encoding.UTF8);
+        } catch { }
+    }
 
     protected override void OnLoad(EventArgs e) {
-        base.OnLoad(e); this.Hide();
+        base.OnLoad(e);
+        this.Hide();
         uint combo = MOD_CONTROL | MOD_ALT | MOD_NOREPEAT;
-        RegisterHotKey(Handle, HOTKEY_LOCK, combo, VK_L);
-        RegisterHotKey(Handle, HOTKEY_UNLOCK, combo, VK_U);
-        Log("Hotkeys registered");
+        bool lockOk   = RegisterHotKey(Handle, HOTKEY_LOCK,   combo, VK_L);
+        bool unlockOk = RegisterHotKey(Handle, HOTKEY_UNLOCK, combo, VK_U);
+        if (lockOk && unlockOk) {
+            Log("Hotkeys registered (Ctrl+Alt+L / Ctrl+Alt+U).");
+        } else {
+            Log("Hotkey registration issue — Lock=" + lockOk.ToString() +
+                " Unlock=" + unlockOk.ToString());
+        }
     }
 
     protected override void WndProc(ref Message m) {
         if (m.Msg == WM_HOTKEY) {
             int id = m.WParam.ToInt32();
-            if (id == HOTKEY_LOCK) RunScript("LOCKED", _lockScript);
-            if (id == HOTKEY_UNLOCK) RunScript("UNLOCKED", _unlockScript);
+            if (id == HOTKEY_LOCK)   ExecuteScript("LOCKED",   _lockScriptPath);
+            if (id == HOTKEY_UNLOCK) ExecuteScript("UNLOCKED", _unlockScriptPath);
         }
         base.WndProc(ref m);
     }
 
-    private void RunScript(string target, string script) {
-        string cur = "LOCKED";
-        try { if (File.Exists(_stateFile)) cur = File.ReadAllText(_stateFile).Trim().ToUpper(); } catch {}
-        if (cur == target) { Log("Already "+target); return; }
-        Log("Hotkey pressed – launching script");
-        Process.Start(new ProcessStartInfo {
-            FileName = "powershell.exe",
-            Arguments = "-WindowStyle Hidden -ExecutionPolicy Bypass -File \""+script+"\"",
-            UseShellExecute = true, Verb = "runas"
-        });
+    private void ExecuteScript(string targetState, string scriptPath) {
+        try {
+            string currentState = ReadState();
+            if (currentState == targetState) {
+                Log("Hotkey pressed for " + targetState + " but already in that state — skipped.");
+                return;
+            }
+            if (!File.Exists(scriptPath)) {
+                Log("Script not found: " + scriptPath);
+                return;
+            }
+            Log("Hotkey pressed — switching to " + targetState + ". Requesting elevation...");
+
+            string args = "-WindowStyle Hidden"
+                        + " -NonInteractive"
+                        + " -NoProfile"
+                        + " -ExecutionPolicy Bypass"
+                        + " -File \"" + scriptPath + "\"";
+
+            ProcessStartInfo psi = new ProcessStartInfo {
+                FileName        = "powershell.exe",
+                Arguments       = args,
+                WindowStyle     = ProcessWindowStyle.Hidden,
+                CreateNoWindow  = true,
+                UseShellExecute = true,    // triggers UAC because listener is limited
+                Verb            = "runas"
+            };
+
+            try {
+                using (Process p = Process.Start(psi)) {
+                    if (p != null) p.WaitForExit(15000);
+                }
+            } catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223) {
+                // 1223 = The operation was canceled by the user (UAC denied)
+                Log("UAC prompt was cancelled by the user.");
+                return;
+            }
+
+            string newState = ReadState();
+            Log("Script execution complete. State is now: " + newState);
+        } catch (Exception ex) {
+            Log("ERROR during script execution: " + ex.Message);
+        }
+    }
+
+    private string ReadState() {
+        try {
+            if (File.Exists(_stateFile))
+                return File.ReadAllText(_stateFile).Trim().ToUpper();
+        } catch { }
+        return "LOCKED";
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e) {
-        UnregisterHotKey(Handle, HOTKEY_LOCK); UnregisterHotKey(Handle, HOTKEY_UNLOCK);
-        Log("Listener stopped"); base.OnFormClosing(e);
+        UnregisterHotKey(Handle, HOTKEY_LOCK);
+        UnregisterHotKey(Handle, HOTKEY_UNLOCK);
+        Log("Hotkey listener stopped and hotkeys unregistered.");
+        base.OnFormClosing(e);
     }
 }
-'@
-
-`$sf = '$Cfg_StateFile'; `$log = '$Cfg_LogFile'; `$ls = '$Cfg_LockScriptPath'; `$us = '$Cfg_UnlockScriptPath'
-`$form = New-Object BrightUIHotkeyForm(`$sf, `$log, `$ls, `$us)
-[System.Windows.Forms.Application]::Run(`$form)
-`$mutex.ReleaseMutex(); `$mutex.Dispose()
 "@
 
+Add-Type -TypeDefinition $csharpCode `
+    -ReferencedAssemblies 'System.Windows.Forms', 'System.Drawing'
+
+$sf           = 'C:\ProgramData\BrightUI\toggle_state.txt'
+$log          = 'C:\ProgramData\BrightUI\hotkey_log.txt'
+$lockScript   = 'C:\ProgramData\BrightUI\Scripts\BrightUI_Lock.ps1'
+$unlockScript = 'C:\ProgramData\BrightUI\Scripts\BrightUI_Unlock.ps1'
+
+$form = New-Object BrightUIHotkeyForm($sf, $log, $lockScript, $unlockScript)
+[System.Windows.Forms.Application]::Run($form)
+
+$mutex.ReleaseMutex()
+$mutex.Dispose()
+'@
+
 Set-Content -Path $listenerPath -Value $listenerContent -Encoding UTF8
-Write-OK "Hotkey listener script saved: $listenerPath"
+Write-OK "Hotkey listener script (v4.2) saved: $listenerPath"
+Write-OK 'Listener runs as limited user; UAC prompt appears on every hotkey press.'
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STEP 15 — Startup Shortcuts for Hotkey Listener & Secondary Monitor
+#  STEP 15 — Write Hotkey Registry Documentation Key
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Step 'Creating Startup shortcuts for hotkey listeners'
+Write-Step 'Writing hotkey documentation to HKLM\SOFTWARE\BrightUI\Hotkeys'
 
-$startupDir = [Environment]::GetFolderPath('Startup')
+$hotkeyRegPath = 'HKLM:\SOFTWARE\BrightUI\Hotkeys'
+Set-Reg $hotkeyRegPath 'LockKey'          $Cfg_LockHotkeyName   'String'
+Set-Reg $hotkeyRegPath 'UnlockKey'        $Cfg_UnlockHotkeyName 'String'
+Set-Reg $hotkeyRegPath 'LockScript'       $Cfg_LockScriptPath   'String'
+Set-Reg $hotkeyRegPath 'UnlockScript'     $Cfg_UnlockScriptPath 'String'
+Set-Reg $hotkeyRegPath 'StateFile'        $Cfg_StateFile        'String'
+Set-Reg $hotkeyRegPath 'LogFile'          $Cfg_LogFile          'String'
+Set-Reg $hotkeyRegPath 'ListenerScript'   $listenerPath         'String'
+Set-Reg $hotkeyRegPath 'Version'          '4.6'                 'String'
+Set-Reg $hotkeyRegPath 'Note' `
+    'Admin-only. Hotkeys registered by BrightUI_HotkeyListener at logon. UAC prompt on each use.' `
+    'String'
 
-# Primary listener (the one that uses RegisterHotKey)
-$primShortcut = Join-Path $startupDir 'BrightUI_HotkeyListener.lnk'
-$WshShell = New-Object -ComObject WScript.Shell
-$Shortcut = $WshShell.CreateShortcut($primShortcut)
-$Shortcut.TargetPath = 'powershell.exe'
-$Shortcut.Arguments = "-WindowStyle Hidden -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$listenerPath`""
-$Shortcut.WorkingDirectory = $Cfg_ScriptsDir
-$Shortcut.Save()
-Write-OK "Primary hotkey listener shortcut: $primShortcut"
+Write-OK "Registry key written: $hotkeyRegPath"
 
-# Secondary keyhook (optional, from BrightUI_Hotkeys.ps1)
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  STEP 16 — Register Scheduled Tasks
+#
+#  v4.2 change: BrightUI_HotkeyListener now runs as BUILTIN\Users (limited)
+#  so that pressing a hotkey brings up a UAC prompt.
+# ══════════════════════════════════════════════════════════════════════════════
+Write-Step 'Registering scheduled tasks (v4.2 — limited listener for UAC prompt)'
+
+$sysPrincipal = New-ScheduledTaskPrincipal `
+    -UserId    'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+
+$sysSettings  = New-ScheduledTaskSettingsSet `
+    -ExecutionTimeLimit (New-TimeSpan -Minutes 3) -MultipleInstances IgnoreNew -Hidden
+
+# ── BrightUI_SecurityLock  (SYSTEM, on-demand) ──────────────────────────────
+$lockTaskAction = New-ScheduledTaskAction `
+    -Execute  'powershell.exe' `
+    -Argument "-WindowStyle Hidden -NonInteractive -NoProfile -ExecutionPolicy Bypass -File `"$togglePath`" -State LOCKED"
+
+Register-ScheduledTask `
+    -TaskName    'BrightUI_SecurityLock' `
+    -Action      $lockTaskAction `
+    -Principal   $sysPrincipal `
+    -Settings    $sysSettings `
+    -Description 'BrightUI: Forces LOCKED state. Callable by IT administrators.' `
+    -Force | Out-Null
+
+Write-OK 'Task: BrightUI_SecurityLock  (SYSTEM, on-demand)'
+
+# ── BrightUI_SecurityUnlock  (SYSTEM, on-demand) ────────────────────────────
+$unlockTaskAction = New-ScheduledTaskAction `
+    -Execute  'powershell.exe' `
+    -Argument "-WindowStyle Hidden -NonInteractive -NoProfile -ExecutionPolicy Bypass -File `"$togglePath`" -State UNLOCKED"
+
+Register-ScheduledTask `
+    -TaskName    'BrightUI_SecurityUnlock' `
+    -Action      $unlockTaskAction `
+    -Principal   $sysPrincipal `
+    -Settings    $sysSettings `
+    -Description 'BrightUI: Forces UNLOCKED state. Callable by IT administrators.' `
+    -Force | Out-Null
+
+Write-OK 'Task: BrightUI_SecurityUnlock  (SYSTEM, on-demand)'
+
+# ── BrightUI_HotkeyListener  (BUILTIN\Users, Limited — at logon) ──────────────
+$lstAction = New-ScheduledTaskAction `
+    -Execute  'powershell.exe' `
+    -Argument "-WindowStyle Hidden -NonInteractive -NoProfile -ExecutionPolicy Bypass -File `"$listenerPath`""
+
+$lstTrigger = New-ScheduledTaskTrigger -AtLogOn
+
+$lstPrincipal = New-ScheduledTaskPrincipal `
+    -GroupId 'BUILTIN\Users' -RunLevel Limited
+
+$lstSettings = New-ScheduledTaskSettingsSet `
+    -ExecutionTimeLimit (New-TimeSpan -Hours 24) `
+    -MultipleInstances  IgnoreNew `
+    -RestartCount       3 `
+    -RestartInterval    (New-TimeSpan -Minutes 1) `
+    -Hidden
+
+Register-ScheduledTask `
+    -TaskName    'BrightUI_HotkeyListener' `
+    -Action      $lstAction `
+    -Trigger     $lstTrigger `
+    -Principal   $lstPrincipal `
+    -Settings    $lstSettings `
+    -Description 'BrightUI: Registers security hotkeys at logon. Limited user — UAC prompt when used.' `
+    -Force | Out-Null
+
+Write-OK 'Task: BrightUI_HotkeyListener  (BUILTIN\Users, Limited — at logon)'
+
+# ── BrightUI_LoginReminder  (all users, at logon +2 s) ───────────────────────
+$remAction = New-ScheduledTaskAction `
+    -Execute  'powershell.exe' `
+    -Argument "-WindowStyle Hidden -NonInteractive -NoProfile -ExecutionPolicy Bypass -File `"$reminderPath`""
+
+$remTrigger       = New-ScheduledTaskTrigger -AtLogOn
+$remTrigger.Delay = 'PT2S'
+
+$remPrincipal = New-ScheduledTaskPrincipal `
+    -GroupId 'BUILTIN\Users' -RunLevel Limited
+
+$remSettings = New-ScheduledTaskSettingsSet `
+    -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -MultipleInstances IgnoreNew
+
+Register-ScheduledTask `
+    -TaskName    'BrightUI_LoginReminder' `
+    -Action      $remAction `
+    -Trigger     $remTrigger `
+    -Principal   $remPrincipal `
+    -Settings    $remSettings `
+    -Description 'BrightUI: Shows advanced sign-in instructions popup at every user logon (+2s delay).' `
+    -Force | Out-Null
+
+Write-OK 'Task: BrightUI_LoginReminder  (all users, at logon +2s)'
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  STEP 16A — Create Additional Hotkey Persistence Files (BrightUI_Hotkeys.ps1, .vbs, .reg)
+# ══════════════════════════════════════════════════════════════════════════════
+Write-Step 'Creating secondary hotkey monitor files (BrightUI_Hotkeys.ps1, .vbs, .reg)'
+
 $hotkeysPs1Path = Join-Path $Cfg_ScriptsDir 'BrightUI_Hotkeys.ps1'
+$hotkeysVbsPath = Join-Path $Cfg_ScriptsDir 'BrightUI_Hotkeys.vbs'
+$hotkeysRegPath = Join-Path $Cfg_ScriptsDir 'BrightUI_Hotkeys.reg'
+
+# 1) PowerShell hotkey listener (GetAsyncKeyState)
 $hotkeysPs1Content = @'
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
+
 public class KeyboardHook {
     [DllImport("user32.dll")]
     public static extern short GetAsyncKeyState(int vKey);
 }
 "@
 
-$unlockScript = "__UNLOCK_SCRIPT__"
-$lockScript   = "__LOCK_SCRIPT__"
+$unlockScript = "C:\ProgramData\BrightUI\Scripts\BrightUI_Unlock.ps1"
+$lockScript   = "C:\ProgramData\BrightUI\Scripts\BrightUI_Lock.ps1"
+
+Write-Host "BrightUI Hotkey Service Started..."
 
 while ($true) {
-    $ctrl = [KeyboardHook]::GetAsyncKeyState(0x11)
-    $alt  = [KeyboardHook]::GetAsyncKeyState(0x12)
-    $uKey = [KeyboardHook]::GetAsyncKeyState(0x55)
+
+    # CTRL + ALT + U
+    $ctrl  = [KeyboardHook]::GetAsyncKeyState(0x11)
+    $alt   = [KeyboardHook]::GetAsyncKeyState(0x12)
+    $uKey  = [KeyboardHook]::GetAsyncKeyState(0x55)
+
     if (($ctrl -band 0x8000) -and ($alt -band 0x8000) -and ($uKey -band 0x8000)) {
+
         Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-ExecutionPolicy Bypass -File `"$unlockScript`""
+
         Start-Sleep -Milliseconds 1000
     }
+
+    # CTRL + ALT + L
     $lKey = [KeyboardHook]::GetAsyncKeyState(0x4C)
+
     if (($ctrl -band 0x8000) -and ($alt -band 0x8000) -and ($lKey -band 0x8000)) {
+
         Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-ExecutionPolicy Bypass -File `"$lockScript`""
+
         Start-Sleep -Milliseconds 1000
     }
+
     Start-Sleep -Milliseconds 100
 }
 '@
-$hotkeysPs1Content = $hotkeysPs1Content -replace '__UNLOCK_SCRIPT__', $Cfg_UnlockScriptPath
-$hotkeysPs1Content = $hotkeysPs1Content -replace '__LOCK_SCRIPT__', $Cfg_LockScriptPath
 Set-Content -Path $hotkeysPs1Path -Value $hotkeysPs1Content -Encoding UTF8
+Write-OK "BrightUI_Hotkeys.ps1 saved: $hotkeysPs1Path"
 
-$secShortcut = Join-Path $startupDir 'BrightUI_Hotkeys_Second.lnk'
-$Shortcut2 = $WshShell.CreateShortcut($secShortcut)
-$Shortcut2.TargetPath = 'powershell.exe'
-$Shortcut2.Arguments = "-WindowStyle Hidden -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$hotkeysPs1Path`""
-$Shortcut2.WorkingDirectory = $Cfg_ScriptsDir
-$Shortcut2.Save()
-Write-OK "Secondary hotkey listener shortcut: $secShortcut"
+# 2) VBS launcher
+$hotkeysVbsContent = @"
+Set objShell = CreateObject("Wscript.Shell")
+objShell.Run "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File ""C:\ProgramData\BrightUI\Scripts\BrightUI_Hotkeys.ps1""", 0, False
+"@
+Set-Content -Path $hotkeysVbsPath -Value $hotkeysVbsContent -Encoding ASCII
+Write-OK "BrightUI_Hotkeys.vbs saved: $hotkeysVbsPath"
+
+# 3) Registry file to run the VBS at user logon
+$hotkeysRegContent = @'
+Windows Registry Editor Version 5.00
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Run]
+"BrightUIHotkeys"="wscript.exe \"C:\\ProgramData\\BrightUI\\Scripts\\BrightUI_Hotkeys.vbs\""
+'@
+Set-Content -Path $hotkeysRegPath -Value $hotkeysRegContent -Encoding ASCII
+Write-OK "BrightUI_Hotkeys.reg saved: $hotkeysRegPath"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STEP 16 — GCPW Installation (admin only, skip if not)
+#  STEP 16B — Apply the .reg file to enable secondary hotkey monitor at startup
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Step 'Installing GCPW (admin only)'
-if ($script:IsAdmin) {
+Write-Step 'Applying BrightUI_Hotkeys.reg to register secondary hotkey listener'
+
+if (Test-Path -LiteralPath $hotkeysRegPath) {
     try {
-        iex (iwr 'https://raw.githubusercontent.com/Tech-Support-Automated/Powershellcode/master/GCPW.ps1').Content
-        Write-OK 'GCPW installer executed.'
-    } catch { Write-Warn "GCPW failed: $($_.Exception.Message)" }
-
-    & reg add "HKLM\SOFTWARE\Policies\Google\CloudManagement" /v "EnrollmentToken" /t REG_SZ /d "f8a95d69-7c80-4dcb-b7b6-fb91de01dc57" /f
-    & reg add "HKLM\Software\Google\GCPW" /v domains_allowed_to_login /t REG_SZ /d "brightuitechnologies.com" /f
-    & reg add "HKLM\Software\Google\GCPW" /v validity_period_in_days /t REG_DWORD /d 5 /f
-    & reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v dontdisplaylastusername /t REG_DWORD /d 1 /f
-    Write-OK 'GCPW registry keys configured.'
+        $regResult = & reg import "`"$hotkeysRegPath`"" 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-OK "Registry imported successfully: $hotkeysRegPath"
+        } else {
+            Write-Warn "reg import exited with code $LASTEXITCODE. Output: $regResult"
+        }
+    } catch {
+        Write-Warn "Failed to import registry: $($_.Exception.Message)"
+    }
 } else {
-    Write-Skip 'GCPW requires administrator rights.'
+    Write-Warn "Registry file not found: $hotkeysRegPath"
 }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  STEP 17 — PowerShell Execution Policy
+# ══════════════════════════════════════════════════════════════════════════════
+Write-Step 'Setting PowerShell execution policy to RemoteSigned (LocalMachine)'
+
+try {
+    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force
+    Write-OK 'Execution policy set to RemoteSigned for LocalMachine scope.'
+} catch {
+    Write-Warn "Could not set execution policy: $($_.Exception.Message)"
+    Write-Warn 'Run manually:  Set-ExecutionPolicy RemoteSigned -Scope LocalMachine' }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  STEP 18 — Force Group Policy Refresh
+# ══════════════════════════════════════════════════════════════════════════════
+Write-Step 'Refreshing Group Policy (gpupdate /force)'
+
+try {
+    $null = & gpupdate /force 2>&1
+    Write-OK 'Group Policy refreshed successfully.'
+} catch { Write-Warn "gpupdate note (normal on non-domain machines): $($_.Exception.Message)" }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  STEP 19 — Install and Configure GCPW (Google Credential Provider for Windows)
+# ══════════════════════════════════════════════════════════════════════════════
+Write-Step 'Installing and configuring GCPW (Google Credential Provider for Windows)'
+
+# 19a. Download and run the GCPW installation script (corrected URL)
+try {
+    Write-Host '  Downloading and executing GCPW installer script...'
+    iex (iwr 'https://raw.githubusercontent.com/Tech-Support-Automated/Powershellcode/master/GCPW.ps1').Content
+    Write-OK 'GCPW installer script executed successfully.'
+} catch {
+    Write-Warn "GCPW installation failed: $($_.Exception.Message)"
+}
+
+# 19b. Configure GCPW registry keys
+try {
+    & reg add "HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\CloudManagement" /v "EnrollmentToken" /t REG_SZ /d "f8a95d69-7c80-4dcb-b7b6-fb91de01dc57" /f
+    Write-OK 'GCPW enrollment token configured.'
+} catch { Write-Warn "Failed to set EnrollmentToken: $($_.Exception.Message)" }
+
+try {
+    & reg add "HKEY_LOCAL_MACHINE\Software\Google\GCPW" /v domains_allowed_to_login /t REG_SZ /d "brightuitechnologies.com" /f
+    Write-OK 'GCPW allowed login domain: brightuitechnologies.com'
+} catch { Write-Warn "Failed to set domains_allowed_to_login: $($_.Exception.Message)" }
+
+try {
+    & reg add "HKEY_LOCAL_MACHINE\Software\Google\GCPW" /v validity_period_in_days /t REG_DWORD /d 5 /f
+    Write-OK 'GCPW validity period set to 5 days.'
+} catch { Write-Warn "Failed to set validity_period_in_days: $($_.Exception.Message)" }
+
+# 19c. Hide last username on login screen
+try {
+    & reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v dontdisplaylastusername /t REG_DWORD /d 1 /f
+    Write-OK 'Last username hidden on login screen (dontdisplaylastusername = 1).'
+} catch { Write-Warn "Failed to set dontdisplaylastusername: $($_.Exception.Message)" }
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1450,18 +1973,65 @@ if ($script:IsAdmin) {
 $ld = '=' * 72
 Write-Host ''
 Write-Host $ld -ForegroundColor Cyan
-Write-Host '   BrightUI Technologies  -  Setup v4.7  Completed!' -ForegroundColor Green
+Write-Host '   BrightUI Technologies  -  Setup v4.6  Completed Successfully!' -ForegroundColor Green
 Write-Host $ld -ForegroundColor Cyan
 Write-Host ''
-Write-Host "  All files stored under: $Cfg_RootDir"
-Write-Host "  Hotkeys: Ctrl+Alt+L (Lock)  /  Ctrl+Alt+U (Unlock)"
-Write-Host "  State file: $Cfg_StateFile"
+Write-Host '  FILES STORED UNDER:' -ForegroundColor Yellow
+Write-Host "    $Cfg_RootDir"
+Write-Host "    Assets\  brightui_logo.png        (logo downloaded: $logoDownloaded)"
+Write-Host '             lockscreen_bg.jpg        (1920x1080, quality 98)'
+Write-Host '    Scripts\ BrightUI_InternetCheck.ps1'
+Write-Host '             BrightUI_LoginReminder.ps1   (branded popup, white text)'
+Write-Host '             BrightUI_Toggle.ps1          (manual admin / task use)'
+Write-Host '             BrightUI_Lock.ps1            (v4.2 — self-elevation, instant USB block)'
+Write-Host '             BrightUI_Unlock.ps1          (v5.2 — online disks, mount volumes)'
+Write-Host '             BrightUI_HotkeyListener.ps1  (v4.2 — limited user, UAC prompt)'
+Write-Host '             BrightUI_Hotkeys.ps1         (secondary hotkey monitor)'
+Write-Host '             BrightUI_Hotkeys.vbs         (launcher for secondary monitor)'
+Write-Host '             BrightUI_Hotkeys.reg         (Run key for secondary monitor)'
+Write-Host "    hotkey_log.txt    (all toggle events logged here)"
+Write-Host "    toggle_state.txt  (current: LOCKED)"
+Write-Host ''
+Write-Host '  CONFIGURED:' -ForegroundColor Yellow
+Write-Host "    Lock Screen         :  Advanced JPEG — glow, step circles, amber strip"
+Write-Host "    Default Win Image   :  REMOVED  (Spotlight + CDM disabled)"
+Write-Host "    Login Screen Blur   :  DISABLED (image renders crisp)"
+Write-Host "    Pre-Login Notice    :  Winlogon dialog (before PIN/password prompt)"
+Write-Host "    Post-Login Popup    :  Borderless branded form — all text WHITE — appears 2s after login"
+Write-Host "    Browser Restriction :  @$Cfg_Domain only (Chrome + Edge)"
+Write-Host "    USB Storage         :  BLOCKED  (driver + Group Policy)"
+Write-Host ''
+Write-Host '  SECURITY MANAGEMENT:' -ForegroundColor Yellow
+Write-Host "    Ctrl+Alt+L  →  Lock   (UAC prompt)  — disables USB, restricts browsers"
+Write-Host "    Ctrl+Alt+U  →  Unlock (UAC prompt)  — enables USB, brings disks online, removes restrictions"
+Write-Host '    All toggle actions are recorded in:  C:\ProgramData\BrightUI\hotkey_log.txt'
+Write-Host ''
+Write-Host '  SCHEDULED TASKS:' -ForegroundColor Yellow
+Write-Host '    BrightUI_SecurityLock    -  SYSTEM, on-demand'
+Write-Host '    BrightUI_SecurityUnlock  -  SYSTEM, on-demand'
+Write-Host '    BrightUI_HotkeyListener  -  BUILTIN\Users (limited), at logon  (UAC on hotkey)'
+Write-Host '    BrightUI_LoginReminder   -  All users, at logon +2s'
+Write-Host ''
+Write-Host '  REGISTRY & GCPW:' -ForegroundColor Yellow
+Write-Host "    HKLM\SOFTWARE\BrightUI\Hotkeys            (documentation)"
+Write-Host "    HKLM\Run\BrightUIHotkeys                  (secondary hotkey monitor via VBS)"
+Write-Host "    GCPW installed                             (Enrollment token set)"
+Write-Host "    Allowed login domain: brightuitechnologies.com"
+Write-Host "    Offline validity period: 5 days"
+Write-Host "    Last username hidden on login screen"
 Write-Host ''
 Write-Host '  NEXT STEPS:' -ForegroundColor Yellow
-Write-Host '    1.  RESTART this computer.'
-Write-Host '    2.  After login, the lock screen image, popup, and hotkeys will be active.'
-Write-Host '    3.  To unlock USB, press Ctrl+Alt+U (UAC prompt will appear).'
-Write-Host '    4.  For system‑wide USB/GCPW, re‑run the script as Administrator.'
+Write-Host '    1.  RESTART this computer (USB driver + lock screen + GCPW need a reboot).'
+Write-Host '    2.  After restart, confirm the lock screen shows the BrightUI image.'
+Write-Host '    3.  Log in as an administrator — the branded popup appears within 2s.'
+Write-Host '    4.  Press Ctrl+Alt+L or Ctrl+Alt+U — a UAC prompt will appear.'
+Write-Host '        Approve the prompt to toggle the security state.'
+Write-Host '    5.  After unlocking, any connected USB storage will be brought online'
+Write-Host '        and its partitions will automatically receive drive letters.'
+Write-Host '    6.  For Gmail OS enforcement, GCPW is now installed and configured.'
+Write-Host '        Users will be prompted to sign in with their @$Cfg_Domain account.'
+Write-Host '    7.  Verify GCPW operation by restarting and signing in with a Google'
+Write-Host '        Workspace account.'
 Write-Host ''
 Write-Host $ld -ForegroundColor Cyan
 Write-Host ''
