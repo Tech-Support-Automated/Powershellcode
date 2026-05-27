@@ -1,30 +1,27 @@
 <#
 ================================================================================
-  BrightUI Technologies — Windows 10 / 11 Login Screen Setup  v4.3
+  BrightUI Technologies — Windows 10 / 11 Login Screen Setup  v4.4
 ================================================================================
   HOW TO RUN THIS SCRIPT:
   ────────────────────────────────────────────────────────────────────────────
   DO NOT paste this into a PowerShell console window (here-strings break).
 
   CORRECT METHOD:
-    1.  Save this file as  BrightUI_Setup_V4.3.ps1
+    1.  Save this file as  BrightUI_Setup_V4.4.ps1
     2.  Open PowerShell as Administrator  (right-click → Run as Administrator)
     3.  cd "C:\path\to\folder"
-    4.  .\BrightUI_Setup_V4.3.ps1
+    4.  .\BrightUI_Setup_V4.4.ps1
 
-  CHANGES IN v4.3  (compared to v4.2):
+  CHANGES IN v4.4  (compared to v4.3):
   ────────────────────────────────────────────────────────────────────────────
-  UNLOCK SCRIPT UPGRADE (v5.1):
-    - WriteProtect reset added.
-    - Full DeviceInstall restriction cleanup (DenyDeviceIDs, etc.).
-    - USB hub restart for immediate device rediscovery.
-    - Log directory auto‑creation inside the unlock script.
+  UNLOCK SCRIPT UPGRADE (v5.2):
+    - After re‑enabling USB devices, all USB disks are brought online and
+      any partitions without a drive letter are automatically mounted.
+    - Shell hardware detection service is started if stopped.
+    - WriteProtect and read‑only status of disks are cleared.
+    - Ensures drives appear in "This PC" and are fully accessible.
 
-  ADDITIONAL HOTKEY PERSISTENCE:
-    - BrightUI_Hotkeys.ps1, .vbs, .reg are now created and applied.
-    - This provides an alternative hotkey listener via Run key.
-
-  ALL OTHER FEATURES from v4.2 are unchanged.
+  ALL OTHER FEATURES from v4.3 are unchanged.
 
   COMPATIBILITY : Windows 10 Build 1703+  and  Windows 11 (all builds)
   REQUIREMENT   : Administrator rights
@@ -37,7 +34,7 @@ $ProgressPreference    = 'SilentlyContinue'
 
 Write-Host ''
 Write-Host ('=' * 72) -ForegroundColor Cyan
-Write-Host '   BrightUI Technologies — Windows Login Screen Setup  v4.3' -ForegroundColor Cyan
+Write-Host '   BrightUI Technologies — Windows Login Screen Setup  v4.4' -ForegroundColor Cyan
 Write-Host ('=' * 72) -ForegroundColor Cyan
 Write-Host ''
 
@@ -1240,9 +1237,9 @@ Write-OK 'Self-elevation, immediate USB block, browser termination, domain restr
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STEP 13B — Dedicated UNLOCK Script  (v5.1 — full unlock with WriteProtect + DeviceInstall cleanup)
+#  STEP 13B — Dedicated UNLOCK Script  (v5.2 — ensures drives appear in Explorer)
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Step 'Creating dedicated BrightUI_Unlock.ps1 (v5.1 — complete USB unlock, DeviceInstall cleanup, hub restart)'
+Write-Step 'Creating dedicated BrightUI_Unlock.ps1 (v5.2 — USB unlock + online all disks)'
 
 $unlockScriptContent = @'
 <#
@@ -1250,11 +1247,12 @@ $unlockScriptContent = @'
     BrightUI_Unlock.ps1 – Fully unlock USB ports, removable storage, and browser logins.
 .DESCRIPTION
     Removes every known Group Policy / registry restriction that blocks USB mass storage,
-    removes sign‑in restrictions for Chrome/Edge, and forces immediate hardware rediscovery.
+    removes sign‑in restrictions for Chrome/Edge, brings all USB disks online,
+    and forces immediate hardware rediscovery.
     Designed to run silently from a hotkey listener.
 .NOTES
-    Version 5.1 – Added WriteProtect reset, full DeviceInstall restriction cleanup,
-                 USB hub restart, and folder auto‑creation.
+    Version 5.2 – Added automatic disk online + volume mount.
+                  WriteProtect reset, DeviceInstall cleanup, USB hub restart.
 #>
 
 # ── Self‑elevation to administrator ───────────────────────────────────────────
@@ -1289,7 +1287,7 @@ function Write-Log([string]$msg) {
     } catch {}
 }
 
-Write-Log "Unlock script started (v5.1)"
+Write-Log "Unlock script started (v5.2)"
 
 # ── Check current state ───────────────────────────────────────────────────────
 $currentState = 'LOCKED'
@@ -1411,7 +1409,67 @@ try {
     Write-Log "Hardware rescan issued"
 } catch { Write-Log "pnputil scan note: $_" }
 
-# ── 8. Remove Chrome domain restrictions ──────────────────────────────────────
+# ── 8. NEW: Bring all USB disks online and mount volumes ──────────────────────
+Write-Log "Bringing USB disks online and mounting volumes..."
+
+# 8a. Start Shell Hardware Detection service (may be disabled)
+try {
+    Set-Service -Name ShellHWDetection -StartupType Manual -ErrorAction SilentlyContinue
+    Start-Service -Name ShellHWDetection -ErrorAction SilentlyContinue
+    Write-Log "ShellHWDetection service started"
+} catch { Write-Log "ShellHWDetection service note: $($_.Exception.Message)" }
+
+# 8b. Online all USB disks and remove read‑only flag
+$usbDisks = Get-Disk | Where-Object { $_.BusType -eq 'USB' }
+if (-not $usbDisks) {
+    # Fallback: try to find USB disks via CIM
+    $usbCimDisks = Get-CimInstance -ClassName Win32_DiskDrive |
+        Where-Object { $_.InterfaceType -eq 'USB' }
+    foreach ($cimDisk in $usbCimDisks) {
+        $diskNum = ($cimDisk.Index -as [int])
+        $disk    = Get-Disk -Number $diskNum -ErrorAction SilentlyContinue
+        if ($disk) { $usbDisks += $disk }
+    }
+}
+
+foreach ($disk in $usbDisks) {
+    try {
+        if ($disk.IsOffline) {
+            Set-Disk -InputObject $disk -IsOffline $false
+            Write-Log "Disk $($disk.Number) brought online"
+        }
+        if ($disk.IsReadOnly) {
+            Set-Disk -InputObject $disk -IsReadOnly $false
+            Write-Log "Disk $($disk.Number) made writable"
+        }
+        # Mount any partition without a drive letter
+        $partitions = Get-Partition -DiskNumber $disk.Number -ErrorAction SilentlyContinue |
+            Where-Object { $_.DriveLetter -eq $null -and $_.Type -ne 'Unknown' }
+        foreach ($part in $partitions) {
+            $assigned = $false
+            # Try to assign a letter automatically
+            try {
+                Set-Partition -InputObject $part -NewDriveLetter ([char]::MinValue) -ErrorAction Stop
+                # The above assigns the next available letter
+                Write-Log "Partition $($part.PartitionNumber) on disk $($disk.Number) received a drive letter"
+                $assigned = $true
+            } catch {}
+            if (-not $assigned) {
+                # Manual fallback: choose first free letter
+                $freeLetters = 67..90 | ForEach-Object { [char]$_ } |
+                    Where-Object { -not (Get-PSDrive -Name $_ -ErrorAction SilentlyContinue) }
+                if ($freeLetters) {
+                    $letter = $freeLetters[0]
+                    try { Set-Partition -InputObject $part -NewDriveLetter $letter -ErrorAction Stop; Write-Log "Assigned drive $letter to partition $($part.PartitionNumber)" } catch {}
+                }
+            }
+        }
+    } catch { Write-Log "Error processing disk $($disk.Number): $($_.Exception.Message)" }
+}
+
+Write-Log "USB disk online/mount procedure completed"
+
+# ── 9. Remove Chrome domain restrictions ──────────────────────────────────────
 try {
     $keys = @('AllowedDomainsForApps','RestrictSigninToPattern','BrowserSignin','SecondaryGoogleAccountSigninAllowed')
     foreach ($k in $keys) {
@@ -1420,20 +1478,20 @@ try {
     Write-Log "Chrome restrictions removed"
 } catch { Write-Log "Error removing Chrome restrictions: $($_.Exception.Message)" }
 
-# ── 9. Remove Edge domain restrictions ────────────────────────────────────────
+# ── 10. Remove Edge domain restrictions ───────────────────────────────────────
 try {
     Remove-ItemProperty -Path $edgePath -Name 'RestrictSigninToPattern' -ErrorAction SilentlyContinue
     Remove-ItemProperty -Path $edgePath -Name 'BrowserSignin'           -ErrorAction SilentlyContinue
     Write-Log "Edge restrictions removed"
 } catch { Write-Log "Error removing Edge restrictions: $($_.Exception.Message)" }
 
-# ── 10. Update state file ─────────────────────────────────────────────────────
+# ── 11. Update state file ─────────────────────────────────────────────────────
 try {
     Set-Content -Path $stateFile -Value 'UNLOCKED' -Force -Encoding UTF8
     Write-Log "State file updated to UNLOCKED"
 } catch { Write-Log "Error updating state file: $($_.Exception.Message)" }
 
-# ── 11. Refresh Group Policy ──────────────────────────────────────────────────
+# ── 12. Refresh Group Policy ──────────────────────────────────────────────────
 try {
     gpupdate.exe /force /quiet 2>$null
     Write-Log "Group Policy refreshed"
@@ -1443,8 +1501,8 @@ Write-Log "Unlock script completed successfully"
 '@
 
 Set-Content -Path $Cfg_UnlockScriptPath -Value $unlockScriptContent -Encoding UTF8
-Write-OK "Unlock script (v5.1) saved: $Cfg_UnlockScriptPath"
-Write-OK 'Full USB unlock, WriteProtect reset, DeviceInstall cleanup, hub restart.'
+Write-OK "Unlock script (v5.2) saved: $Cfg_UnlockScriptPath"
+Write-OK 'USB unlock, WriteProtect reset, DeviceInstall cleanup, disk online & mount, hub restart.'
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1645,7 +1703,7 @@ Set-Reg $hotkeyRegPath 'UnlockScript'     $Cfg_UnlockScriptPath 'String'
 Set-Reg $hotkeyRegPath 'StateFile'        $Cfg_StateFile        'String'
 Set-Reg $hotkeyRegPath 'LogFile'          $Cfg_LogFile          'String'
 Set-Reg $hotkeyRegPath 'ListenerScript'   $listenerPath         'String'
-Set-Reg $hotkeyRegPath 'Version'          '4.3'                 'String'
+Set-Reg $hotkeyRegPath 'Version'          '4.4'                 'String'
 Set-Reg $hotkeyRegPath 'Note' `
     'Admin-only. Hotkeys registered by BrightUI_HotkeyListener at logon. UAC prompt on each use.' `
     'String'
@@ -1873,7 +1931,7 @@ try {
 $ld = '=' * 72
 Write-Host ''
 Write-Host $ld -ForegroundColor Cyan
-Write-Host '   BrightUI Technologies  -  Setup v4.3  Completed Successfully!' -ForegroundColor Green
+Write-Host '   BrightUI Technologies  -  Setup v4.4  Completed Successfully!' -ForegroundColor Green
 Write-Host $ld -ForegroundColor Cyan
 Write-Host ''
 Write-Host '  FILES STORED UNDER:' -ForegroundColor Yellow
@@ -1884,7 +1942,7 @@ Write-Host '    Scripts\ BrightUI_InternetCheck.ps1'
 Write-Host '             BrightUI_LoginReminder.ps1   (branded popup, white text)'
 Write-Host '             BrightUI_Toggle.ps1          (manual admin / task use)'
 Write-Host '             BrightUI_Lock.ps1            (v4.2 — self-elevation, instant USB block)'
-Write-Host '             BrightUI_Unlock.ps1          (v5.1 — full unlock, WriteProtect, DeviceInstall cleanup)'
+Write-Host '             BrightUI_Unlock.ps1          (v5.2 — online disks, mount volumes)'
 Write-Host '             BrightUI_HotkeyListener.ps1  (v4.2 — limited user, UAC prompt)'
 Write-Host '             BrightUI_Hotkeys.ps1         (secondary hotkey monitor)'
 Write-Host '             BrightUI_Hotkeys.vbs         (launcher for secondary monitor)'
@@ -1903,7 +1961,7 @@ Write-Host "    USB Storage         :  BLOCKED  (driver + Group Policy)"
 Write-Host ''
 Write-Host '  SECURITY MANAGEMENT:' -ForegroundColor Yellow
 Write-Host "    Ctrl+Alt+L  →  Lock   (UAC prompt)  — disables USB, restricts browsers"
-Write-Host "    Ctrl+Alt+U  →  Unlock (UAC prompt)  — enables USB, removes restrictions"
+Write-Host "    Ctrl+Alt+U  →  Unlock (UAC prompt)  — enables USB, brings disks online, removes restrictions"
 Write-Host '    All toggle actions are recorded in:  C:\ProgramData\BrightUI\hotkey_log.txt'
 Write-Host ''
 Write-Host '  SCHEDULED TASKS:' -ForegroundColor Yellow
@@ -1922,7 +1980,9 @@ Write-Host '    2.  After restart, confirm the lock screen shows the BrightUI im
 Write-Host '    3.  Log in as an administrator — the branded popup appears within 2s.'
 Write-Host '    4.  Press Ctrl+Alt+L or Ctrl+Alt+U — a UAC prompt will appear.'
 Write-Host '        Approve the prompt to toggle the security state.'
-Write-Host '    5.  For Gmail OS enforcement also install GCPW:'
+Write-Host '    5.  After unlocking, any connected USB storage will be brought online'
+Write-Host '        and its partitions will automatically receive drive letters.'
+Write-Host '    6.  For Gmail OS enforcement also install GCPW:'
 Write-Host '        https://support.google.com/a/answer/9250996'
 Write-Host ''
 Write-Host $ld -ForegroundColor Cyan
