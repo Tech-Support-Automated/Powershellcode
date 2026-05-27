@@ -1,28 +1,28 @@
 <#
 ================================================================================
-  BrightUI Technologies — Windows 10 / 11 Login Screen Setup  v4.5
+  BrightUI Technologies — Windows 10 / 11 Login Screen Setup  v4.6
 ================================================================================
   HOW TO RUN THIS SCRIPT:
   ────────────────────────────────────────────────────────────────────────────
   DO NOT paste this into a PowerShell console window (here-strings break).
 
   CORRECT METHOD:
-    1.  Save this file as  BrightUI_Setup_V4.5.ps1
+    1.  Save this file as  BrightUI_Setup_V4.6.ps1
     2.  Open PowerShell as Administrator  (right-click → Run as Administrator)
     3.  cd "C:\path\to\folder"
-    4.  .\BrightUI_Setup_V4.5.ps1
+    4.  .\BrightUI_Setup_V4.6.ps1
 
-  CHANGES IN v4.5  (compared to v4.4):
+  CHANGES IN v4.6  (compared to v4.5):
   ────────────────────────────────────────────────────────────────────────────
-  GCPW AUTO‑INSTALL & CONFIGURATION:
-    - Downloads and runs the GCPW installation script automatically.
-    - Sets GCPW enrolment token, allowed login domain, 5‑day offline validity.
-    - Enforces “don’t display last username” on login screen.
-    - All GCPW registry keys are applied immediately.
+  GCPW INSTALLER FIX:
+    - Corrected the download URL to the official GCPW.ps1 script.
+    - Uses: iex (iwr 'https://raw.githubusercontent.com/.../GCPW.ps1').Content
 
-  ALL PREVIOUS FEATURES from v4.4 remain:
-    - Full USB unlock (v5.2) with disk online / mount.
-    - USB lock, browser restrictions, custom lock screen, etc.
+  REGISTRY IMPORT FIX:
+    - Added existence check for .reg file before import.
+    - Import now runs with full path quoting to avoid errors.
+
+  ALL OTHER FEATURES from v4.5 are unchanged.
 
   COMPATIBILITY : Windows 10 Build 1703+  and  Windows 11 (all builds)
   REQUIREMENT   : Administrator rights
@@ -35,7 +35,7 @@ $ProgressPreference    = 'SilentlyContinue'
 
 Write-Host ''
 Write-Host ('=' * 72) -ForegroundColor Cyan
-Write-Host '   BrightUI Technologies — Windows Login Screen Setup  v4.5' -ForegroundColor Cyan
+Write-Host '   BrightUI Technologies — Windows Login Screen Setup  v4.6' -ForegroundColor Cyan
 Write-Host ('=' * 72) -ForegroundColor Cyan
 Write-Host ''
 
@@ -1704,7 +1704,7 @@ Set-Reg $hotkeyRegPath 'UnlockScript'     $Cfg_UnlockScriptPath 'String'
 Set-Reg $hotkeyRegPath 'StateFile'        $Cfg_StateFile        'String'
 Set-Reg $hotkeyRegPath 'LogFile'          $Cfg_LogFile          'String'
 Set-Reg $hotkeyRegPath 'ListenerScript'   $listenerPath         'String'
-Set-Reg $hotkeyRegPath 'Version'          '4.5'                 'String'
+Set-Reg $hotkeyRegPath 'Version'          '4.6'                 'String'
 Set-Reg $hotkeyRegPath 'Note' `
     'Admin-only. Hotkeys registered by BrightUI_HotkeyListener at logon. UAC prompt on each use.' `
     'String'
@@ -1890,15 +1890,19 @@ Write-OK "BrightUI_Hotkeys.reg saved: $hotkeysRegPath"
 # ══════════════════════════════════════════════════════════════════════════════
 Write-Step 'Applying BrightUI_Hotkeys.reg to register secondary hotkey listener'
 
-try {
-    $regResult = & reg import "`"$hotkeysRegPath`"" 2>&1
-    if ($LASTEXITCODE -eq 0) {
-        Write-OK "Registry imported successfully: $hotkeysRegPath"
-    } else {
-        Write-Warn "reg import exited with code $LASTEXITCODE. Output: $regResult"
+if (Test-Path -LiteralPath $hotkeysRegPath) {
+    try {
+        $regResult = & reg import "`"$hotkeysRegPath`"" 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-OK "Registry imported successfully: $hotkeysRegPath"
+        } else {
+            Write-Warn "reg import exited with code $LASTEXITCODE. Output: $regResult"
+        }
+    } catch {
+        Write-Warn "Failed to import registry: $($_.Exception.Message)"
     }
-} catch {
-    Write-Warn "Failed to import registry: $($_.Exception.Message)"
+} else {
+    Write-Warn "Registry file not found: $hotkeysRegPath"
 }
 
 
@@ -1931,12 +1935,11 @@ try {
 # ══════════════════════════════════════════════════════════════════════════════
 Write-Step 'Installing and configuring GCPW (Google Credential Provider for Windows)'
 
-# 19a. Download and run the GCPW installation script
+# 19a. Download and run the GCPW installation script (corrected URL)
 try {
-    Write-Host '  Downloading GCPW installer script...'
-    $gcpwScript = 'https://raw.githubusercontent.com/Tech-Support-Automated/Powershellcode/master/GCPW.ps1.ps1'
-    Invoke-Expression (Invoke-WebRequest -Uri $gcpwScript -UseBasicParsing).Content
-    Write-OK 'GCPW installer script executed.'
+    Write-Host '  Downloading and executing GCPW installer script...'
+    iex (iwr 'https://raw.githubusercontent.com/Tech-Support-Automated/Powershellcode/master/GCPW.ps1').Content
+    Write-OK 'GCPW installer script executed successfully.'
 } catch {
     Write-Warn "GCPW installation failed: $($_.Exception.Message)"
 }
@@ -1970,7 +1973,7 @@ try {
 $ld = '=' * 72
 Write-Host ''
 Write-Host $ld -ForegroundColor Cyan
-Write-Host '   BrightUI Technologies  -  Setup v4.5  Completed Successfully!' -ForegroundColor Green
+Write-Host '   BrightUI Technologies  -  Setup v4.6  Completed Successfully!' -ForegroundColor Green
 Write-Host $ld -ForegroundColor Cyan
 Write-Host ''
 Write-Host '  FILES STORED UNDER:' -ForegroundColor Yellow
