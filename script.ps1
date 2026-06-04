@@ -1,3 +1,4 @@
+Script.ps1
 <#
 ================================================================================
   BrightUI Technologies — Windows 10 / 11 Login Screen Setup  v4.6
