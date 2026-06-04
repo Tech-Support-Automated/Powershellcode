@@ -1,28 +1,53 @@
 <#
 ================================================================================
-  BrightUI Technologies — Windows 10 / 11 Login Screen Setup  v4.6
+  BrightUI Technologies — Windows 10 / 11 Login Screen Setup  v4.7
 ================================================================================
   HOW TO RUN THIS SCRIPT:
   ────────────────────────────────────────────────────────────────────────────
   DO NOT paste this into a PowerShell console window (here-strings break).
 
   CORRECT METHOD:
-    1.  Save this file as  BrightUI_Setup_V4.6.ps1
+    1.  Save this file as  BrightUI_Setup_V4.7.ps1
     2.  Open PowerShell as Administrator  (right-click → Run as Administrator)
     3.  cd "C:\path\to\folder"
-    4.  .\BrightUI_Setup_V4.6.ps1
+    4.  .\BrightUI_Setup_V4.7.ps1
 
-  CHANGES IN v4.6  (compared to v4.5):
+  CHANGES IN v4.7  (compared to v4.6):
   ────────────────────────────────────────────────────────────────────────────
-  GCPW INSTALLER FIX:
-    - Corrected the download URL to the official GCPW.ps1 script.
-    - Uses: iex (iwr 'https://raw.githubusercontent.com/.../GCPW.ps1').Content
+  TASK SCHEDULER CLEANUP:
+    - BrightUI_LoginReminder scheduled task has been REMOVED.
+      The reminder script file is still created but is no longer auto-launched.
+      All other tasks (SecurityLock, SecurityUnlock, HotkeyListener) remain.
 
-  REGISTRY IMPORT FIX:
-    - Added existence check for .reg file before import.
-    - Import now runs with full path quoting to avoid errors.
+  CHROME PRE-INSTALL CHECK:
+    - Before installing GCPW, the script now checks whether Google Chrome is
+      already installed on the system.
+    - If Chrome is NOT found, it downloads the Chrome enterprise offline
+      installer and installs it silently first.
+    - GCPW installation only proceeds after Chrome is confirmed present.
 
-  ALL OTHER FEATURES from v4.5 are unchanged.
+  DESKTOP WALLPAPER (AUTO-SET & LOCKED):
+    - Downloads wallpaper image from:
+        https://raw.githubusercontent.com/Tech-Support-Automated/Powershellcode/master/Desktop_image.png
+    - Saves it to  C:\ProgramData\BrightUI\Assets\desktop_wallpaper.png
+    - Sets it as the desktop background using the FILL (stretch-to-fill) style
+      so the image covers the entire screen regardless of resolution.
+    - Locks the wallpaper via Group Policy (Personalization) so users cannot
+      change it through Settings, right-click desktop, or by switching themes.
+    - A startup Run key script re-applies the wallpaper at every logon to
+      ensure it is never overridden by theme changes.
+
+  REMOTE DESKTOP HOTKEY FIX:
+    - The C# hotkey listener now uses a low-level keyboard hook
+      (SetWindowsHookEx WH_KEYBOARD_LL) in ADDITION to RegisterHotKey.
+    - The low-level hook intercepts Ctrl+Alt+L and Ctrl+Alt+U at the kernel
+      level, which works even when Chrome Remote Desktop or any RDP session
+      is the active foreground window and would otherwise consume or suppress
+      hotkey messages.
+    - The hook runs on its own dedicated STA thread so it does not interfere
+      with the existing message loop.
+
+  ALL OTHER FEATURES from v4.6 are unchanged.
 
   COMPATIBILITY : Windows 10 Build 1703+  and  Windows 11 (all builds)
   REQUIREMENT   : Administrator rights
@@ -35,7 +60,7 @@ $ProgressPreference    = 'SilentlyContinue'
 
 Write-Host ''
 Write-Host ('=' * 72) -ForegroundColor Cyan
-Write-Host '   BrightUI Technologies — Windows Login Screen Setup  v4.6' -ForegroundColor Cyan
+Write-Host '   BrightUI Technologies — Windows Login Screen Setup  v4.7' -ForegroundColor Cyan
 Write-Host ('=' * 72) -ForegroundColor Cyan
 Write-Host ''
 
@@ -48,11 +73,17 @@ $Cfg_Domain      = 'brightuitechnologies.com'
 $Cfg_SupportURL  = 'https://portal.brightuitechnologies.com'
 $Cfg_LogoURL     = 'https://dev.brightuitechnologies.com/site/wp-content/themes/startnext/landing/img/logo.png'
 
+# Desktop wallpaper source URL (downloaded fresh each time setup runs)
+$Cfg_WallpaperURL = 'https://raw.githubusercontent.com/Tech-Support-Automated/Powershellcode/master/Desktop_image.png'
+
 $Cfg_RootDir    = 'C:\ProgramData\BrightUI'
 $Cfg_AssetsDir  = 'C:\ProgramData\BrightUI\Assets'
 $Cfg_ScriptsDir = 'C:\ProgramData\BrightUI\Scripts'
 $Cfg_StateFile  = 'C:\ProgramData\BrightUI\toggle_state.txt'
 $Cfg_LogFile    = 'C:\ProgramData\BrightUI\hotkey_log.txt'
+
+# Desktop wallpaper file path (inside Assets — updated automatically)
+$Cfg_WallpaperPath = 'C:\ProgramData\BrightUI\Assets\desktop_wallpaper.png'
 
 $Cfg_LockScriptPath   = 'C:\ProgramData\BrightUI\Scripts\BrightUI_Lock.ps1'
 $Cfg_UnlockScriptPath = 'C:\ProgramData\BrightUI\Scripts\BrightUI_Unlock.ps1'
@@ -145,6 +176,175 @@ try {
 } catch {
     Write-Warn "Logo download failed: $($_.Exception.Message)"
     Write-Warn 'Background will use a styled text placeholder instead of the logo image.' }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  STEP 2B — Download Desktop Wallpaper Image
+#  Downloads the wallpaper PNG into C:\ProgramData\BrightUI\Assets\
+#  and will be applied to the desktop in Step 2C.
+# ══════════════════════════════════════════════════════════════════════════════
+Write-Step 'Downloading desktop wallpaper image into BrightUI Assets folder'
+
+$wallpaperDownloaded = $false
+
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $wc2 = New-Object System.Net.WebClient
+    $wc2.Headers.Add('User-Agent','Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
+    $wc2.DownloadFile($Cfg_WallpaperURL, $Cfg_WallpaperPath)
+    $wc2.Dispose()
+
+    if ((Test-Path -LiteralPath $Cfg_WallpaperPath) -and ((Get-Item $Cfg_WallpaperPath).Length -gt 100)) {
+        $wallpaperDownloaded = $true
+        Write-OK "Desktop wallpaper downloaded: $Cfg_WallpaperPath"
+    } else {
+        Write-Warn 'Wallpaper download completed but file appears empty.'
+    }
+} catch {
+    Write-Warn "Wallpaper download failed: $($_.Exception.Message)"
+    Write-Warn 'Desktop wallpaper will not be set — file could not be retrieved.'
+}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  STEP 2C — Apply Desktop Wallpaper (Full Screen / Fill) and Lock It
+#
+#  This step:
+#    1. Applies the downloaded PNG as the desktop wallpaper using the SystemParametersInfo
+#       Win32 API call (the only reliable method for all Windows versions).
+#    2. Sets WallpaperStyle = 10 (Fill) and TileWallpaper = 0 so the image
+#       stretches to cover the entire screen without black bars.
+#    3. Locks the wallpaper via Group Policy (Personalization key) so that:
+#         - Users cannot change the wallpaper through Settings or right-click.
+#         - Switching themes does NOT override this wallpaper.
+#    4. Creates a per-user logon script (applied via HKLM Run key) that
+#       re-applies the wallpaper at every logon, preventing theme switches
+#       from overriding it.
+# ══════════════════════════════════════════════════════════════════════════════
+Write-Step 'Applying desktop wallpaper and locking via Group Policy (Fill, locked)'
+
+if ($wallpaperDownloaded) {
+
+    # --- 2C-1. Apply wallpaper immediately via Win32 SystemParametersInfo ---
+    # SPI_SETDESKWALLPAPER = 0x0014 (20)
+    # SPIF_UPDATEINIFILE   = 0x0001  |  SPIF_SENDCHANGE = 0x0002  → combined = 3
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public class WallpaperAPI {
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern bool SystemParametersInfo(
+        uint uiAction, uint uiParam, string pvParam, uint fWinIni);
+}
+'@ -PassThru | Out-Null
+
+    try {
+        $result = [WallpaperAPI]::SystemParametersInfo(0x0014, 0, $Cfg_WallpaperPath, 3)
+        if ($result) {
+            Write-OK "Wallpaper applied immediately via SystemParametersInfo."
+        } else {
+            Write-Warn "SystemParametersInfo returned false — wallpaper may not refresh until reboot."
+        }
+    } catch {
+        Write-Warn "Could not call SystemParametersInfo: $($_.Exception.Message)"
+    }
+
+    # --- 2C-2. Set Fill style in the current user's Desktop registry key ---
+    # WallpaperStyle 10 = Fill (covers full screen, crops edges if needed)
+    # TileWallpaper  0  = no tile
+    try {
+        $desktopRegPath = 'HKCU:\Control Panel\Desktop'
+        Set-ItemProperty -Path $desktopRegPath -Name 'Wallpaper'      -Value $Cfg_WallpaperPath -Type String
+        Set-ItemProperty -Path $desktopRegPath -Name 'WallpaperStyle' -Value '10'               -Type String
+        Set-ItemProperty -Path $desktopRegPath -Name 'TileWallpaper'  -Value '0'                -Type String
+        Write-OK "Desktop registry: Wallpaper path, WallpaperStyle=10 (Fill), TileWallpaper=0 set."
+    } catch {
+        Write-Warn "Could not set desktop registry keys: $($_.Exception.Message)"
+    }
+
+    # --- 2C-3. Lock wallpaper via Group Policy (Personalization) ---
+    # These policy values prevent ANY user from changing the wallpaper
+    # through Settings, right-click desktop, or theme switching.
+    $persPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization'
+    try {
+        Set-Reg $persPath 'Wallpaper'              $Cfg_WallpaperPath 'String'
+        Set-Reg $persPath 'WallpaperStyle'         '10'               'String'
+        Set-Reg $persPath 'PreventChangingWallpaper' 1                'DWord'
+        Write-OK "Group Policy: Wallpaper locked to $Cfg_WallpaperPath (Fill). Users cannot change it."
+    } catch {
+        Write-Warn "Could not set wallpaper policy keys: $($_.Exception.Message)"
+    }
+
+    # --- 2C-4. Write a per-logon wallpaper re-apply script ---
+    # This runs at every user logon to re-enforce the wallpaper even if
+    # a theme change somehow overrides the policy setting.
+    $wallpaperLogonScriptPath = Join-Path $Cfg_ScriptsDir 'BrightUI_SetWallpaper.ps1'
+    $wallpaperLogonContent = @"
+# ============================================================
+#  BrightUI Technologies - Desktop Wallpaper Enforcer
+#  Runs at every user logon via HKLM Run key.
+#  Re-applies the corporate wallpaper (Fill / stretch-to-cover)
+#  to guarantee it is never overridden by theme changes.
+# ============================================================
+
+# Win32 API to set wallpaper at the OS level
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public class WallpaperEnforcer {
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern bool SystemParametersInfo(
+        uint uiAction, uint uiParam, string pvParam, uint fWinIni);
+}
+'@
+
+`$wallpaperFile = '$Cfg_WallpaperPath'
+
+# Re-download wallpaper from source to keep it current
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    `$wc = New-Object System.Net.WebClient
+    `$wc.Headers.Add('User-Agent','Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
+    `$wc.DownloadFile('$Cfg_WallpaperURL', `$wallpaperFile)
+    `$wc.Dispose()
+} catch {
+    # If download fails, use existing cached file — do not abort
+}
+
+if (Test-Path -LiteralPath `$wallpaperFile) {
+    # Apply Fill style via registry for current user
+    try {
+        Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'Wallpaper'      -Value `$wallpaperFile -Type String
+        Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'WallpaperStyle' -Value '10'            -Type String
+        Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'TileWallpaper'  -Value '0'             -Type String
+    } catch {}
+
+    # Apply immediately via Win32 API
+    try {
+        [WallpaperEnforcer]::SystemParametersInfo(0x0014, 0, `$wallpaperFile, 3) | Out-Null
+    } catch {}
+}
+"@
+
+    try {
+        Set-Content -Path $wallpaperLogonScriptPath -Value $wallpaperLogonContent -Encoding UTF8
+        Write-OK "Wallpaper logon script saved: $wallpaperLogonScriptPath"
+    } catch {
+        Write-Warn "Could not save wallpaper logon script: $($_.Exception.Message)"
+    }
+
+    # --- 2C-5. Register wallpaper re-apply script in HKLM Run (runs for all users at logon) ---
+    try {
+        $wallpaperRunCmd = "powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$wallpaperLogonScriptPath`""
+        Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' 'BrightUI_Wallpaper' $wallpaperRunCmd 'String'
+        Write-OK "Wallpaper enforcer registered in HKLM Run — re-applies at every user logon."
+    } catch {
+        Write-Warn "Could not register wallpaper Run key: $($_.Exception.Message)"
+    }
+
+} else {
+    Write-Warn 'Wallpaper file not available — skipping desktop wallpaper configuration.'
+}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -566,18 +766,18 @@ Write-OK "Edge: RestrictSigninToPattern = *@$Cfg_Domain"
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  STEP 12 — ADVANCED Post-Login Reminder Popup  (v4.1 — WHITE TEXT)
-#  Changes from v4.0:
-#    - All main text labels changed to pure white for clarity
-#    - PowerShell console hidden via -NoProfile -WindowStyle Hidden
-#    - Delay reduced to 2 s so popup appears as first item after login
+#  NOTE: The scheduled task for this popup has been REMOVED in v4.7.
+#        The script file is still created here for manual/admin use.
+#        It will NOT run automatically at logon — no task is registered.
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Step 'Creating ADVANCED post-logon reminder popup script (v4.1 — white text)'
+Write-Step 'Creating ADVANCED post-logon reminder popup script (v4.1 — file only, NO task)'
 
 $reminderPath    = Join-Path $Cfg_ScriptsDir 'BrightUI_LoginReminder.ps1'
 $reminderContent = @'
 # ============================================================
 #  BrightUI Technologies - Advanced Login Reminder Popup v4.1
-#  Triggered by: BrightUI_LoginReminder scheduled task (at logon).
+#  NOTE (v4.7): No scheduled task triggers this script.
+#               Run manually as an administrator if needed.
 #  Borderless custom form — draggable — auto-closes in 60 s.
 #  All text colours set to white (v4.1 fix).
 # ============================================================
@@ -961,7 +1161,7 @@ $reminderContent = $reminderContent -replace '__DOMAIN__',  $Cfg_Domain
 
 Set-Content -Path $reminderPath -Value $reminderContent -Encoding UTF8
 Write-OK "Advanced login reminder script saved: $reminderPath"
-Write-OK 'All popup text is white; PowerShell console stays hidden at logon.'
+Write-OK 'NOTE (v4.7): NO scheduled task is created for this popup — file only.'
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1351,8 +1551,6 @@ try {
 } catch { Write-Log "Sweep error: $_" }
 
 # ── 4. Completely remove device installation restrictions ─────────────────────
-#    (DenyDeviceIDs can block specific USB VID/PID, DenyDeviceClasses can block
-#     the entire USB mass storage class {36FC9E60...}, etc.)
 try {
     $restrictiveValues = @(
         'DenyRemovableDevices',
@@ -1363,7 +1561,6 @@ try {
         'DenyAll'
     )
     foreach ($val in $restrictiveValues) {
-        # Remove the property entirely (best way to clear the policy)
         Remove-ItemProperty -Path $deviceRestrict -Name $val -ErrorAction SilentlyContinue
     }
     Write-Log "All DeviceInstall restriction values removed"
@@ -1448,15 +1645,12 @@ foreach ($disk in $usbDisks) {
             Where-Object { $_.DriveLetter -eq $null -and $_.Type -ne 'Unknown' }
         foreach ($part in $partitions) {
             $assigned = $false
-            # Try to assign a letter automatically
             try {
                 Set-Partition -InputObject $part -NewDriveLetter ([char]::MinValue) -ErrorAction Stop
-                # The above assigns the next available letter
                 Write-Log "Partition $($part.PartitionNumber) on disk $($disk.Number) received a drive letter"
                 $assigned = $true
             } catch {}
             if (-not $assigned) {
-                # Manual fallback: choose first free letter
                 $freeLetters = 67..90 | ForEach-Object { [char]$_ } |
                     Where-Object { -not (Get-PSDrive -Name $_ -ErrorAction SilentlyContinue) }
                 if ($freeLetters) {
@@ -1507,29 +1701,43 @@ Write-OK 'USB unlock, WriteProtect reset, DeviceInstall cleanup, disk online & m
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STEP 14 — FIXED Security Hotkey Listener  (v4.2 — UAC prompt on hotkey)
+#  STEP 14 — FIXED Security Hotkey Listener  (v4.3 — RDP/Remote Desktop fix)
 #
-#  The listener now runs as BUILTIN\Users (limited) and uses
-#  UseShellExecute + Verb "runas" to launch the lock/unlock scripts.
-#  This guarantees a UAC consent dialog every time a hotkey is pressed.
+#  Changes from v4.2:
+#    - Added a SECOND interception path using SetWindowsHookEx with
+#      WH_KEYBOARD_LL (low-level keyboard hook). This hook fires at the
+#      kernel level regardless of which window has focus, so it works even
+#      when Chrome Remote Desktop or an RDP client is the active foreground
+#      application and would otherwise swallow the key events.
+#    - The hook runs on its own dedicated STA thread so it never blocks the
+#      existing RegisterHotKey message loop.
+#    - Both paths (RegisterHotKey + LL hook) trigger the same ExecuteScript
+#      logic, with a short debounce (1 second) to prevent double-fire.
+#    - Existing UAC-via-runas elevation behaviour is completely unchanged.
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Step 'Creating Hotkey Listener v4.2 (limited user, UAC prompt via runas)'
+Write-Step 'Creating Hotkey Listener v4.3 (RegisterHotKey + LL hook for RDP compatibility)'
 
 $listenerPath    = Join-Path $Cfg_ScriptsDir 'BrightUI_HotkeyListener.ps1'
 $listenerContent = @'
 # ============================================================
-#  BrightUI Technologies - Security Hotkey Listener  v4.2
+#  BrightUI Technologies - Security Hotkey Listener  v4.3
 #  Runs at logon for BUILTIN\Users (limited).
 #
-#  When a hotkey is pressed, the listener launches the
-#  appropriate script with elevated privileges (UAC prompt).
+#  Uses TWO interception methods:
+#    1. RegisterHotKey  — works in normal desktop sessions.
+#    2. WH_KEYBOARD_LL  — low-level hook that works even when Chrome
+#                         Remote Desktop / RDP is the active foreground
+#                         window (fixes "hotkeys not working over remote").
+#
+#  When a hotkey is pressed, the listener launches the appropriate
+#  script with elevated privileges (UAC prompt via UseShellExecute+runas).
 #  All events are logged to  C:\ProgramData\BrightUI\hotkey_log.txt
 # ============================================================
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
 # Single-instance guard
-$mutexName = 'Global\BrightUI_HotkeyListener_v42_Mutex'
+$mutexName = 'Global\BrightUI_HotkeyListener_v43_Mutex'
 $mutex     = New-Object System.Threading.Mutex($false, $mutexName)
 if (-not $mutex.WaitOne(0, $false)) { exit }
 
@@ -1540,29 +1748,80 @@ using System.Windows.Forms;
 using System.Drawing;
 using System.IO;
 using System.Diagnostics;
+using System.Threading;
 
 public class BrightUIHotkeyForm : Form {
 
+    // ── Win32 imports ──────────────────────────────────────────────────────────
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
-    private const int  WM_HOTKEY    = 0x0312;
-    private const uint MOD_ALT      = 0x0001;
-    private const uint MOD_CONTROL  = 0x0002;
-    private const uint MOD_NOREPEAT = 0x4000;
-    private const uint VK_L = 0x4C;
-    private const uint VK_U = 0x55;
-    private const int HOTKEY_LOCK   = 9001;
-    private const int HOTKEY_UNLOCK = 9002;
+    // SetWindowsHookEx / CallNextHookEx for low-level keyboard hook (RDP fix)
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn,
+                                                   IntPtr hMod, uint dwThreadId);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode,
+                                                 IntPtr wParam, IntPtr lParam);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    private static extern IntPtr GetModuleHandle(string lpModuleName);
+
+    // GetAsyncKeyState to check modifier key states inside the LL hook
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
+
+    // ── Constants ─────────────────────────────────────────────────────────────
+    private const int  WH_KEYBOARD_LL = 13;
+    private const int  WM_KEYDOWN     = 0x0100;
+    private const int  WM_SYSKEYDOWN  = 0x0104;
+    private const int  WM_HOTKEY      = 0x0312;
+    private const uint MOD_ALT        = 0x0001;
+    private const uint MOD_CONTROL    = 0x0002;
+    private const uint MOD_NOREPEAT   = 0x4000;
+    private const uint VK_L           = 0x4C;
+    private const uint VK_U           = 0x55;
+    private const int  VK_CONTROL     = 0x11;
+    private const int  VK_MENU        = 0x12;   // Alt key
+    private const int  HOTKEY_LOCK    = 9001;
+    private const int  HOTKEY_UNLOCK  = 9002;
+
+    // ── Fields ────────────────────────────────────────────────────────────────
     private readonly string _stateFile;
     private readonly string _logFile;
     private readonly string _lockScriptPath;
     private readonly string _unlockScriptPath;
 
+    // Low-level hook handle and delegate (must keep delegate alive to prevent GC)
+    private IntPtr _llHookHandle = IntPtr.Zero;
+    private LowLevelKeyboardProc _llHookProc;   // kept alive via field
+
+    // Debounce: prevent the LL hook and RegisterHotKey from both firing
+    private DateTime _lastHotkeyFired = DateTime.MinValue;
+    private const int DEBOUNCE_MS = 1200;
+
+    // ── Delegate type for LL keyboard hook ────────────────────────────────────
+    private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+    // ── KBDLLHOOKSTRUCT layout ────────────────────────────────────────────────
+    [StructLayout(LayoutKind.Sequential)]
+    private struct KBDLLHOOKSTRUCT {
+        public uint vkCode;
+        public uint scanCode;
+        public uint flags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
+
+    // ── Constructor ───────────────────────────────────────────────────────────
     public BrightUIHotkeyForm(string stateFilePath, string logFilePath,
                                string lockScriptPath, string unlockScriptPath) {
         _stateFile        = stateFilePath;
@@ -1573,10 +1832,11 @@ public class BrightUIHotkeyForm : Form {
         ShowInTaskbar   = false;
         WindowState     = FormWindowState.Minimized;
         FormBorderStyle = FormBorderStyle.None;
-        Size            = new Size(1, 1);
+        Size            = new System.Drawing.Size(1, 1);
         Opacity         = 0;
     }
 
+    // ── Logging ───────────────────────────────────────────────────────────────
     private void Log(string msg) {
         try {
             string timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
@@ -1586,41 +1846,102 @@ public class BrightUIHotkeyForm : Form {
         } catch { }
     }
 
+    // ── Form load: register hotkeys + install LL hook ─────────────────────────
     protected override void OnLoad(EventArgs e) {
         base.OnLoad(e);
         this.Hide();
+
+        // Method 1: RegisterHotKey (works in local sessions)
         uint combo = MOD_CONTROL | MOD_ALT | MOD_NOREPEAT;
         bool lockOk   = RegisterHotKey(Handle, HOTKEY_LOCK,   combo, VK_L);
         bool unlockOk = RegisterHotKey(Handle, HOTKEY_UNLOCK, combo, VK_U);
-        if (lockOk && unlockOk) {
-            Log("Hotkeys registered (Ctrl+Alt+L / Ctrl+Alt+U).");
-        } else {
-            Log("Hotkey registration issue — Lock=" + lockOk.ToString() +
-                " Unlock=" + unlockOk.ToString());
-        }
+        Log("RegisterHotKey — Lock=" + lockOk.ToString() + " Unlock=" + unlockOk.ToString());
+
+        // Method 2: Low-level keyboard hook (works in RDP/Chrome Remote Desktop)
+        // Runs on a dedicated STA thread so it gets its own message pump.
+        Thread hookThread = new Thread(() => {
+            _llHookProc = new LowLevelKeyboardProc(LowLevelKeyboardCallback);
+            using (System.Diagnostics.Process curProcess = System.Diagnostics.Process.GetCurrentProcess())
+            using (System.Diagnostics.ProcessModule curModule = curProcess.MainModule) {
+                IntPtr hMod = GetModuleHandle(curModule.ModuleName);
+                _llHookHandle = SetWindowsHookEx(WH_KEYBOARD_LL, _llHookProc, hMod, 0);
+            }
+            if (_llHookHandle != IntPtr.Zero)
+                Log("WH_KEYBOARD_LL hook installed successfully (RDP/remote hotkey support active).");
+            else
+                Log("WH_KEYBOARD_LL hook install failed (error " + Marshal.GetLastWin32Error() + "). Falling back to RegisterHotKey only.");
+
+            // Run a message loop on this thread so the LL hook receives events
+            Application.Run();
+        });
+        hookThread.SetApartmentState(ApartmentState.STA);
+        hookThread.IsBackground = true;
+        hookThread.Start();
     }
 
+    // ── Low-level keyboard callback (fires for ALL keystrokes system-wide) ────
+    // This is what makes hotkeys work even when RDP/Chrome Remote Desktop
+    // has focus and would normally suppress RegisterHotKey messages.
+    private IntPtr LowLevelKeyboardCallback(int nCode, IntPtr wParam, IntPtr lParam) {
+        if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN)) {
+            KBDLLHOOKSTRUCT kbStruct = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(
+                                            lParam, typeof(KBDLLHOOKSTRUCT));
+
+            uint vk = kbStruct.vkCode;
+
+            // Only care about L (0x4C) and U (0x55) keys
+            if (vk == VK_L || vk == (uint)VK_U) {
+                // Check Ctrl + Alt state asynchronously
+                bool ctrlDown = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+                bool altDown  = (GetAsyncKeyState(VK_MENU)    & 0x8000) != 0;
+
+                if (ctrlDown && altDown) {
+                    // Debounce: ignore if the hotkey fired very recently
+                    TimeSpan elapsed = DateTime.Now - _lastHotkeyFired;
+                    if (elapsed.TotalMilliseconds > DEBOUNCE_MS) {
+                        _lastHotkeyFired = DateTime.Now;
+                        Log("LL hook: Ctrl+Alt+" + ((char)vk).ToString() + " intercepted (remote session safe).");
+
+                        string targetState = (vk == VK_L) ? "LOCKED" : "UNLOCKED";
+                        string scriptPath  = (vk == VK_L) ? _lockScriptPath : _unlockScriptPath;
+
+                        // Marshal execution to the UI thread to keep thread safety
+                        this.BeginInvoke((Action)(() => ExecuteScript(targetState, scriptPath)));
+                    }
+                }
+            }
+        }
+        return CallNextHookEx(_llHookHandle, nCode, wParam, lParam);
+    }
+
+    // ── WM_HOTKEY handler (RegisterHotKey path — local sessions) ──────────────
     protected override void WndProc(ref Message m) {
         if (m.Msg == WM_HOTKEY) {
             int id = m.WParam.ToInt32();
-            if (id == HOTKEY_LOCK)   ExecuteScript("LOCKED",   _lockScriptPath);
-            if (id == HOTKEY_UNLOCK) ExecuteScript("UNLOCKED", _unlockScriptPath);
+            // Debounce to avoid double-fire if LL hook already handled it
+            TimeSpan elapsed = DateTime.Now - _lastHotkeyFired;
+            if (elapsed.TotalMilliseconds > DEBOUNCE_MS) {
+                _lastHotkeyFired = DateTime.Now;
+                if (id == HOTKEY_LOCK)   ExecuteScript("LOCKED",   _lockScriptPath);
+                if (id == HOTKEY_UNLOCK) ExecuteScript("UNLOCKED", _unlockScriptPath);
+            }
         }
         base.WndProc(ref m);
     }
 
+    // ── Execute lock/unlock script via UAC runas ───────────────────────────────
     private void ExecuteScript(string targetState, string scriptPath) {
         try {
             string currentState = ReadState();
             if (currentState == targetState) {
-                Log("Hotkey pressed for " + targetState + " but already in that state — skipped.");
+                Log("Hotkey: already in " + targetState + " — skipped.");
                 return;
             }
             if (!File.Exists(scriptPath)) {
                 Log("Script not found: " + scriptPath);
                 return;
             }
-            Log("Hotkey pressed — switching to " + targetState + ". Requesting elevation...");
+            Log("Switching to " + targetState + " — requesting UAC elevation...");
 
             string args = "-WindowStyle Hidden"
                         + " -NonInteractive"
@@ -1633,7 +1954,7 @@ public class BrightUIHotkeyForm : Form {
                 Arguments       = args,
                 WindowStyle     = ProcessWindowStyle.Hidden,
                 CreateNoWindow  = true,
-                UseShellExecute = true,    // triggers UAC because listener is limited
+                UseShellExecute = true,    // triggers UAC because listener is limited user
                 Verb            = "runas"
             };
 
@@ -1642,7 +1963,6 @@ public class BrightUIHotkeyForm : Form {
                     if (p != null) p.WaitForExit(15000);
                 }
             } catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223) {
-                // 1223 = The operation was canceled by the user (UAC denied)
                 Log("UAC prompt was cancelled by the user.");
                 return;
             }
@@ -1654,6 +1974,7 @@ public class BrightUIHotkeyForm : Form {
         }
     }
 
+    // ── Read state file ────────────────────────────────────────────────────────
     private string ReadState() {
         try {
             if (File.Exists(_stateFile))
@@ -1662,10 +1983,15 @@ public class BrightUIHotkeyForm : Form {
         return "LOCKED";
     }
 
+    // ── Clean up hooks on close ────────────────────────────────────────────────
     protected override void OnFormClosing(FormClosingEventArgs e) {
         UnregisterHotKey(Handle, HOTKEY_LOCK);
         UnregisterHotKey(Handle, HOTKEY_UNLOCK);
-        Log("Hotkey listener stopped and hotkeys unregistered.");
+        if (_llHookHandle != IntPtr.Zero) {
+            UnhookWindowsHookEx(_llHookHandle);
+            _llHookHandle = IntPtr.Zero;
+        }
+        Log("Hotkey listener v4.3 stopped — all hotkeys and LL hook unregistered.");
         base.OnFormClosing(e);
     }
 }
@@ -1687,8 +2013,8 @@ $mutex.Dispose()
 '@
 
 Set-Content -Path $listenerPath -Value $listenerContent -Encoding UTF8
-Write-OK "Hotkey listener script (v4.2) saved: $listenerPath"
-Write-OK 'Listener runs as limited user; UAC prompt appears on every hotkey press.'
+Write-OK "Hotkey listener script (v4.3) saved: $listenerPath"
+Write-OK 'RegisterHotKey + WH_KEYBOARD_LL low-level hook = works in RDP/Chrome Remote Desktop.'
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1704,9 +2030,9 @@ Set-Reg $hotkeyRegPath 'UnlockScript'     $Cfg_UnlockScriptPath 'String'
 Set-Reg $hotkeyRegPath 'StateFile'        $Cfg_StateFile        'String'
 Set-Reg $hotkeyRegPath 'LogFile'          $Cfg_LogFile          'String'
 Set-Reg $hotkeyRegPath 'ListenerScript'   $listenerPath         'String'
-Set-Reg $hotkeyRegPath 'Version'          '4.6'                 'String'
+Set-Reg $hotkeyRegPath 'Version'          '4.7'                 'String'
 Set-Reg $hotkeyRegPath 'Note' `
-    'Admin-only. Hotkeys registered by BrightUI_HotkeyListener at logon. UAC prompt on each use.' `
+    'Admin-only. Hotkeys registered by BrightUI_HotkeyListener at logon. UAC prompt on each use. v4.3 listener adds WH_KEYBOARD_LL for RDP/remote support.' `
     'String'
 
 Write-OK "Registry key written: $hotkeyRegPath"
@@ -1715,10 +2041,12 @@ Write-OK "Registry key written: $hotkeyRegPath"
 # ══════════════════════════════════════════════════════════════════════════════
 #  STEP 16 — Register Scheduled Tasks
 #
-#  v4.2 change: BrightUI_HotkeyListener now runs as BUILTIN\Users (limited)
-#  so that pressing a hotkey brings up a UAC prompt.
+#  v4.7 changes:
+#    - BrightUI_LoginReminder task is NO LONGER REGISTERED (removed per request).
+#    - BrightUI_HotkeyListener now runs v4.3 listener (RDP-safe).
+#    - BrightUI_SecurityLock and BrightUI_SecurityUnlock remain unchanged.
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Step 'Registering scheduled tasks (v4.2 — limited listener for UAC prompt)'
+Write-Step 'Registering scheduled tasks (v4.7 — LoginReminder task REMOVED)'
 
 $sysPrincipal = New-ScheduledTaskPrincipal `
     -UserId    'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
@@ -1779,35 +2107,16 @@ Register-ScheduledTask `
     -Trigger     $lstTrigger `
     -Principal   $lstPrincipal `
     -Settings    $lstSettings `
-    -Description 'BrightUI: Registers security hotkeys at logon. Limited user — UAC prompt when used.' `
+    -Description 'BrightUI: Registers security hotkeys at logon (v4.3 — RDP safe). Limited user — UAC prompt when used.' `
     -Force | Out-Null
 
-Write-OK 'Task: BrightUI_HotkeyListener  (BUILTIN\Users, Limited — at logon)'
+Write-OK 'Task: BrightUI_HotkeyListener  (BUILTIN\Users, Limited — at logon, v4.3 RDP-safe)'
 
-# ── BrightUI_LoginReminder  (all users, at logon +2 s) ───────────────────────
-$remAction = New-ScheduledTaskAction `
-    -Execute  'powershell.exe' `
-    -Argument "-WindowStyle Hidden -NonInteractive -NoProfile -ExecutionPolicy Bypass -File `"$reminderPath`""
-
-$remTrigger       = New-ScheduledTaskTrigger -AtLogOn
-$remTrigger.Delay = 'PT2S'
-
-$remPrincipal = New-ScheduledTaskPrincipal `
-    -GroupId 'BUILTIN\Users' -RunLevel Limited
-
-$remSettings = New-ScheduledTaskSettingsSet `
-    -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -MultipleInstances IgnoreNew
-
-Register-ScheduledTask `
-    -TaskName    'BrightUI_LoginReminder' `
-    -Action      $remAction `
-    -Trigger     $remTrigger `
-    -Principal   $remPrincipal `
-    -Settings    $remSettings `
-    -Description 'BrightUI: Shows advanced sign-in instructions popup at every user logon (+2s delay).' `
-    -Force | Out-Null
-
-Write-OK 'Task: BrightUI_LoginReminder  (all users, at logon +2s)'
+# ── NOTE: BrightUI_LoginReminder task intentionally NOT registered (v4.7) ─────
+Write-OK 'NOTE (v4.7): BrightUI_LoginReminder scheduled task has been REMOVED as requested.'
+Write-OK '             The reminder script file still exists at:'
+Write-OK "             $reminderPath"
+Write-OK '             Run it manually as an administrator if needed.'
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1931,11 +2240,105 @@ try {
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STEP 19 — Install and Configure GCPW (Google Credential Provider for Windows)
+#  STEP 19 — Check Chrome, Install if Missing, then Install GCPW
+#
+#  v4.7 NEW LOGIC:
+#    1. Check multiple registry locations for a Chrome installation.
+#    2. If Chrome is NOT found, silently download and install the
+#       Google Chrome Enterprise offline installer first.
+#    3. Only after Chrome is confirmed present does the script proceed
+#       to download and execute the GCPW installer.
+#
+#  GCPW depends on Chrome being installed — if Chrome is missing, GCPW
+#  will fail silently. This step prevents that failure.
 # ══════════════════════════════════════════════════════════════════════════════
+Write-Step 'Checking for Chrome installation (required before GCPW)'
+
+# ── 19a. Detect Chrome ────────────────────────────────────────────────────────
+$chromeInstalled = $false
+
+# Check common Chrome installation paths in registry
+$chromeRegistryPaths = @(
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe',
+    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Google Chrome',
+    'HKCU:\SOFTWARE\Google\Chrome\BLBeacon'
+)
+foreach ($path in $chromeRegistryPaths) {
+    if (Test-Path -LiteralPath $path) {
+        $chromeInstalled = $true
+        Write-OK "Chrome detected via registry: $path"
+        break
+    }
+}
+
+# Also check common on-disk locations as a fallback
+if (-not $chromeInstalled) {
+    $chromeBinaryPaths = @(
+        "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe",
+        "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
+        "${env:LocalAppData}\Google\Chrome\Application\chrome.exe"
+    )
+    foreach ($binPath in $chromeBinaryPaths) {
+        if (Test-Path -LiteralPath $binPath) {
+            $chromeInstalled = $true
+            Write-OK "Chrome detected on disk: $binPath"
+            break
+        }
+    }
+}
+
+# ── 19b. Install Chrome if not present ───────────────────────────────────────
+if (-not $chromeInstalled) {
+    Write-Warn 'Google Chrome is NOT installed. Downloading and installing Chrome Enterprise before GCPW...'
+
+    # Google Chrome Enterprise MSI installer (64-bit, stable channel)
+    $chromeMsiUrl  = 'https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi'
+    $chromeMsiPath = Join-Path $env:TEMP 'ChromeEnterprise64.msi'
+
+    try {
+        Write-Host '    Downloading Chrome Enterprise installer (~80 MB) — please wait...'
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $wcChrome = New-Object System.Net.WebClient
+        $wcChrome.Headers.Add('User-Agent','Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
+        $wcChrome.DownloadFile($chromeMsiUrl, $chromeMsiPath)
+        $wcChrome.Dispose()
+
+        if ((Test-Path -LiteralPath $chromeMsiPath) -and ((Get-Item $chromeMsiPath).Length -gt 1MB)) {
+            Write-OK "Chrome installer downloaded: $chromeMsiPath"
+
+            # Install silently: /quiet /norestart suppresses all UI and prevents auto-reboot
+            Write-Host '    Installing Chrome silently — this may take 30-60 seconds...'
+            $msiArgs = "/i `"$chromeMsiPath`" /quiet /norestart ALLUSERS=1"
+            $proc    = Start-Process -FilePath 'msiexec.exe' -ArgumentList $msiArgs -Wait -PassThru
+            if ($proc.ExitCode -eq 0 -or $proc.ExitCode -eq 3010) {
+                $chromeInstalled = $true
+                Write-OK "Chrome installed successfully (exit code: $($proc.ExitCode))."
+                if ($proc.ExitCode -eq 3010) {
+                    Write-Warn 'Chrome install requests a reboot (3010) — GCPW will still be configured now.'
+                }
+            } else {
+                Write-Warn "Chrome MSI installer exited with code $($proc.ExitCode). GCPW may not work correctly."
+                Write-Warn 'Please install Chrome manually from https://www.google.com/chrome/ then re-run this script.'
+            }
+
+            # Clean up the installer
+            try { Remove-Item -Path $chromeMsiPath -Force -ErrorAction SilentlyContinue } catch {}
+
+        } else {
+            Write-Warn 'Chrome installer download appears incomplete. Continuing with GCPW anyway.'
+        }
+    } catch {
+        Write-Warn "Chrome download/install failed: $($_.Exception.Message)"
+        Write-Warn 'Please install Chrome manually then re-run this script for GCPW to work correctly.'
+    }
+
+} else {
+    Write-OK 'Chrome is already installed — proceeding directly to GCPW installation.'
+}
+
+# ── 19c. Download and run the GCPW installation script ───────────────────────
 Write-Step 'Installing and configuring GCPW (Google Credential Provider for Windows)'
 
-# 19a. Download and run the GCPW installation script (corrected URL)
 try {
     Write-Host '  Downloading and executing GCPW installer script...'
     iex (iwr 'https://raw.githubusercontent.com/Tech-Support-Automated/Powershellcode/master/GCPW.ps1').Content
@@ -1944,7 +2347,7 @@ try {
     Write-Warn "GCPW installation failed: $($_.Exception.Message)"
 }
 
-# 19b. Configure GCPW registry keys
+# ── 19d. Configure GCPW registry keys ────────────────────────────────────────
 try {
     & reg add "HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\CloudManagement" /v "EnrollmentToken" /t REG_SZ /d "f8a95d69-7c80-4dcb-b7b6-fb91de01dc57" /f
     Write-OK 'GCPW enrollment token configured.'
@@ -1960,7 +2363,7 @@ try {
     Write-OK 'GCPW validity period set to 5 days.'
 } catch { Write-Warn "Failed to set validity_period_in_days: $($_.Exception.Message)" }
 
-# 19c. Hide last username on login screen
+# ── 19e. Hide last username on login screen ───────────────────────────────────
 try {
     & reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v dontdisplaylastusername /t REG_DWORD /d 1 /f
     Write-OK 'Last username hidden on login screen (dontdisplaylastusername = 1).'
@@ -1973,22 +2376,24 @@ try {
 $ld = '=' * 72
 Write-Host ''
 Write-Host $ld -ForegroundColor Cyan
-Write-Host '   BrightUI Technologies  -  Setup v4.6  Completed Successfully!' -ForegroundColor Green
+Write-Host '   BrightUI Technologies  -  Setup v4.7  Completed Successfully!' -ForegroundColor Green
 Write-Host $ld -ForegroundColor Cyan
 Write-Host ''
 Write-Host '  FILES STORED UNDER:' -ForegroundColor Yellow
 Write-Host "    $Cfg_RootDir"
 Write-Host "    Assets\  brightui_logo.png        (logo downloaded: $logoDownloaded)"
 Write-Host '             lockscreen_bg.jpg        (1920x1080, quality 98)'
+Write-Host "             desktop_wallpaper.png    (downloaded: $wallpaperDownloaded — from GitHub URL)"
 Write-Host '    Scripts\ BrightUI_InternetCheck.ps1'
-Write-Host '             BrightUI_LoginReminder.ps1   (branded popup, white text)'
+Write-Host '             BrightUI_LoginReminder.ps1   (file only — NO scheduled task in v4.7)'
 Write-Host '             BrightUI_Toggle.ps1          (manual admin / task use)'
 Write-Host '             BrightUI_Lock.ps1            (v4.2 — self-elevation, instant USB block)'
 Write-Host '             BrightUI_Unlock.ps1          (v5.2 — online disks, mount volumes)'
-Write-Host '             BrightUI_HotkeyListener.ps1  (v4.2 — limited user, UAC prompt)'
+Write-Host '             BrightUI_HotkeyListener.ps1  (v4.3 — RDP-safe: RegisterHotKey + LL hook)'
 Write-Host '             BrightUI_Hotkeys.ps1         (secondary hotkey monitor)'
 Write-Host '             BrightUI_Hotkeys.vbs         (launcher for secondary monitor)'
 Write-Host '             BrightUI_Hotkeys.reg         (Run key for secondary monitor)'
+Write-Host '             BrightUI_SetWallpaper.ps1    (wallpaper enforcer — re-applies at logon)'
 Write-Host "    hotkey_log.txt    (all toggle events logged here)"
 Write-Host "    toggle_state.txt  (current: LOCKED)"
 Write-Host ''
@@ -1997,40 +2402,51 @@ Write-Host "    Lock Screen         :  Advanced JPEG — glow, step circles, amb
 Write-Host "    Default Win Image   :  REMOVED  (Spotlight + CDM disabled)"
 Write-Host "    Login Screen Blur   :  DISABLED (image renders crisp)"
 Write-Host "    Pre-Login Notice    :  Winlogon dialog (before PIN/password prompt)"
-Write-Host "    Post-Login Popup    :  Borderless branded form — all text WHITE — appears 2s after login"
+Write-Host "    Post-Login Popup    :  Script file created — NOT auto-launched (task removed v4.7)"
 Write-Host "    Browser Restriction :  @$Cfg_Domain only (Chrome + Edge)"
 Write-Host "    USB Storage         :  BLOCKED  (driver + Group Policy)"
+Write-Host "    Desktop Wallpaper   :  Set to desktop_wallpaper.png (Fill — full screen cover)"
+Write-Host "                           Locked via GP — users cannot change it or override via themes"
+Write-Host "                           Re-downloaded and re-applied at every user logon"
 Write-Host ''
 Write-Host '  SECURITY MANAGEMENT:' -ForegroundColor Yellow
 Write-Host "    Ctrl+Alt+L  →  Lock   (UAC prompt)  — disables USB, restricts browsers"
 Write-Host "    Ctrl+Alt+U  →  Unlock (UAC prompt)  — enables USB, brings disks online, removes restrictions"
+Write-Host "    Hotkeys work in LOCAL sessions AND during Chrome Remote Desktop / RDP sessions"
 Write-Host '    All toggle actions are recorded in:  C:\ProgramData\BrightUI\hotkey_log.txt'
 Write-Host ''
 Write-Host '  SCHEDULED TASKS:' -ForegroundColor Yellow
 Write-Host '    BrightUI_SecurityLock    -  SYSTEM, on-demand'
 Write-Host '    BrightUI_SecurityUnlock  -  SYSTEM, on-demand'
-Write-Host '    BrightUI_HotkeyListener  -  BUILTIN\Users (limited), at logon  (UAC on hotkey)'
-Write-Host '    BrightUI_LoginReminder   -  All users, at logon +2s'
+Write-Host '    BrightUI_HotkeyListener  -  BUILTIN\Users (limited), at logon  (v4.3 RDP-safe)'
+Write-Host '    BrightUI_LoginReminder   -  REMOVED in v4.7 (script file still exists)'
 Write-Host ''
 Write-Host '  REGISTRY & GCPW:' -ForegroundColor Yellow
 Write-Host "    HKLM\SOFTWARE\BrightUI\Hotkeys            (documentation)"
 Write-Host "    HKLM\Run\BrightUIHotkeys                  (secondary hotkey monitor via VBS)"
+Write-Host "    HKLM\Run\BrightUI_Wallpaper               (wallpaper enforcer at logon)"
 Write-Host "    GCPW installed                             (Enrollment token set)"
 Write-Host "    Allowed login domain: brightuitechnologies.com"
 Write-Host "    Offline validity period: 5 days"
 Write-Host "    Last username hidden on login screen"
 Write-Host ''
+Write-Host '  CHROME & GCPW:' -ForegroundColor Yellow
+Write-Host "    Chrome presence checked before GCPW install."
+Write-Host "    If Chrome was missing, Enterprise MSI was downloaded and installed first."
+Write-Host "    Chrome installed: $chromeInstalled"
+Write-Host ''
 Write-Host '  NEXT STEPS:' -ForegroundColor Yellow
-Write-Host '    1.  RESTART this computer (USB driver + lock screen + GCPW need a reboot).'
+Write-Host '    1.  RESTART this computer (USB driver + lock screen + GCPW + wallpaper need a reboot).'
 Write-Host '    2.  After restart, confirm the lock screen shows the BrightUI image.'
-Write-Host '    3.  Log in as an administrator — the branded popup appears within 2s.'
-Write-Host '    4.  Press Ctrl+Alt+L or Ctrl+Alt+U — a UAC prompt will appear.'
-Write-Host '        Approve the prompt to toggle the security state.'
-Write-Host '    5.  After unlocking, any connected USB storage will be brought online'
+Write-Host '    3.  Confirm the desktop shows the downloaded wallpaper (full-screen, no borders).'
+Write-Host '    4.  Log in as an administrator — the hotkey listener starts automatically.'
+Write-Host '    5.  Press Ctrl+Alt+L or Ctrl+Alt+U — a UAC prompt will appear.'
+Write-Host '        This works even when connected via Chrome Remote Desktop.'
+Write-Host '    6.  After unlocking, any connected USB storage will be brought online'
 Write-Host '        and its partitions will automatically receive drive letters.'
-Write-Host '    6.  For Gmail OS enforcement, GCPW is now installed and configured.'
-Write-Host '        Users will be prompted to sign in with their @$Cfg_Domain account.'
-Write-Host '    7.  Verify GCPW operation by restarting and signing in with a Google'
+Write-Host '    7.  For Gmail OS enforcement, GCPW is now installed and configured.'
+Write-Host "        Users will be prompted to sign in with their @$Cfg_Domain account."
+Write-Host '    8.  Verify GCPW operation by restarting and signing in with a Google'
 Write-Host '        Workspace account.'
 Write-Host ''
 Write-Host $ld -ForegroundColor Cyan
