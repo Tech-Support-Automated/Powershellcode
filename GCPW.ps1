@@ -1,22 +1,24 @@
 <#
 ================================================================================
-  BrightUI Technologies — Chrome + GCPW Silent Installer
+  BrightUI Technologies — Full Silent Software Installer
 ================================================================================
   HOW TO RUN:
     1. Open PowerShell as Administrator (right-click → Run as Administrator)
-    2. .\Install_Chrome_GCPW.ps1
+    2. .\Install_BrightUI_Software.ps1
 
-  WHAT THIS DOES:
-    Step 1 — Checks if Google Chrome is already installed.
-             If NOT installed, downloads the Chrome Enterprise 64-bit MSI
-             and installs it silently (no UI, no reboot prompt).
-    Step 2 — Downloads and silently installs GCPW (Google Credential
-             Provider for Windows) using the enterprise installer.
-    Step 3 — Writes all required GCPW registry keys:
-               • Enrollment token
-               • Allowed login domain  (brightuitechnologies.com)
-               • Offline validity period  (5 days)
-               • Hide last username on login screen
+  WHAT THIS INSTALLS (silently, skips if already installed):
+    1. Google Chrome          — Enterprise 64-bit MSI
+    2. WinRAR                 — 64-bit EXE (silent)
+    3. Visual Studio Code     — System installer (silent)
+    4. Chrome Remote Desktop  — Host MSI (silent)
+    5. Lightshot              — Silent EXE installer
+    6. GCPW                   — Google Credential Provider for Windows
+
+  GCPW REGISTRY KEYS WRITTEN:
+    • Enrollment token
+    • Allowed login domain  (brightuitechnologies.com)
+    • Offline validity period  (5 days)
+    • Hide last username on login screen
 
   REQUIREMENTS : Windows 10/11  |  Administrator rights  |  Internet access
   AFTER RUNNING: RESTART the computer for GCPW to appear on the login screen.
@@ -35,47 +37,100 @@ function Write-Step { param([string]$M)
 function Write-OK   { param([string]$M) Write-Host "    [OK]  $M" -ForegroundColor Green  }
 function Write-Warn { param([string]$M) Write-Host "    [!!]  $M" -ForegroundColor Yellow }
 function Write-Info { param([string]$M) Write-Host "    [..]  $M" -ForegroundColor White  }
+function Write-Skip { param([string]$M) Write-Host "    [--]  $M" -ForegroundColor DarkCyan }
+
+# ── Enforce TLS 1.2 globally ──────────────────────────────────────────────────
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 $Domain          = 'brightuitechnologies.com'
 $EnrollmentToken = 'f8a95d69-7c80-4dcb-b7b6-fb91de01dc57'
 
-# Chrome Enterprise 64-bit MSI (offline / standalone installer — no internet needed at runtime)
+# ── Download URLs ─────────────────────────────────────────────────────────────
 $ChromeMsiUrl  = 'https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi'
-$ChromeMsiPath = "$env:TEMP\ChromeEnterprise64.msi"
-
-# GCPW standalone enterprise 64-bit EXE
+$WinRarUrl     = 'https://www.win-rar.com/fileadmin/winrar-versions/winrar/winrar-x64-701.exe'
+$VSCodeUrl     = 'https://update.code.visualstudio.com/latest/win32-x64/stable'
+$CRDUrl        = 'https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi'
+$LightshotUrl  = 'https://app.prntscr.com/build/setup-lightshot.exe'
 $GcpwUrl       = "https://dl.google.com/tag/s/appguid=%7B32987697-A14E-4B89-84D6-630D5431E831%7D&needsadmin=true&appname=GCPW&etoken=$EnrollmentToken/credentialprovider/gcpwstandaloneenterprise64.exe"
-$GcpwInstaller = "$env:TEMP\gcpwstandaloneenterprise64.exe"
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Temp installer paths ──────────────────────────────────────────────────────
+$ChromeMsiPath  = "$env:TEMP\ChromeEnterprise64.msi"
+$WinRarPath     = "$env:TEMP\winrar-x64.exe"
+$VSCodePath     = "$env:TEMP\vscode-system-installer.exe"
+$CRDPath        = "$env:TEMP\chromeremotedesktophost.msi"
+$LightshotPath  = "$env:TEMP\setup-lightshot.exe"
+$GcpwInstaller  = "$env:TEMP\gcpwstandaloneenterprise64.exe"
+
+# ── Result tracking ───────────────────────────────────────────────────────────
+$Results = [ordered]@{
+    'Google Chrome'          = 'Not attempted'
+    'WinRAR'                 = 'Not attempted'
+    'Visual Studio Code'     = 'Not attempted'
+    'Chrome Remote Desktop'  = 'Not attempted'
+    'Lightshot'              = 'Not attempted'
+    'GCPW'                   = 'Not attempted'
+}
+
+# ── Helper: download a file with error handling ───────────────────────────────
+function Get-Installer {
+    param(
+        [string]$Url,
+        [string]$OutPath,
+        [string]$Name,
+        [long]$MinBytes = 102400   # 100 KB default minimum
+    )
+    Write-Info "Downloading $Name..."
+    Write-Info "Source : $Url"
+    try {
+        Invoke-WebRequest -Uri $Url -OutFile $OutPath -UseBasicParsing `
+                          -UserAgent 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+        $size = (Get-Item $OutPath).Length
+        if ($size -lt $MinBytes) {
+            throw "File too small ($size bytes) — download may have failed."
+        }
+        Write-OK "$Name downloaded ($([math]::Round($size/1MB,1)) MB)"
+        return $true
+    } catch {
+        Write-Warn "$Name download FAILED: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+# ── Helper: cleanup temp file silently ───────────────────────────────────────
+function Remove-TempFile { param([string]$Path)
+    try { Remove-Item -Path $Path -Force -ErrorAction SilentlyContinue } catch {}
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  BANNER
+# ═════════════════════════════════════════════════════════════════════════════
 Write-Host ''
 Write-Host ('=' * 72) -ForegroundColor Cyan
-Write-Host '   BrightUI Technologies — Chrome + GCPW Silent Installer' -ForegroundColor Cyan
+Write-Host '   BrightUI Technologies — Full Silent Software Installer' -ForegroundColor Cyan
 Write-Host ('=' * 72) -ForegroundColor Cyan
+Write-Host ''
+Write-Host '  Softwares : Chrome, WinRAR, VS Code, Chrome Remote Desktop,' -ForegroundColor White
+Write-Host '              Lightshot, GCPW' -ForegroundColor White
+Write-Host '  Mode      : Silent install — already-installed apps are SKIPPED' -ForegroundColor White
+Write-Host ''
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  STEP 1 — Check if Google Chrome is already installed
-# ══════════════════════════════════════════════════════════════════════════════
-Write-Step 'Checking for existing Google Chrome installation'
+# ═════════════════════════════════════════════════════════════════════════════
+#  STEP 1 — GOOGLE CHROME
+# ═════════════════════════════════════════════════════════════════════════════
+Write-Step 'Google Chrome — Check & Install'
 
 $ChromeInstalled = $false
 
-# Check registry (covers system-wide and per-user installs)
 $ChromeRegPaths = @(
     'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe',
     'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Google Chrome',
     'HKCU:\SOFTWARE\Google\Chrome\BLBeacon'
 )
 foreach ($rp in $ChromeRegPaths) {
-    if (Test-Path -LiteralPath $rp) {
-        $ChromeInstalled = $true
-        Write-OK "Chrome found in registry: $rp"
-        break
-    }
+    if (Test-Path -LiteralPath $rp) { $ChromeInstalled = $true; break }
 }
 
-# Also check common on-disk locations
 if (-not $ChromeInstalled) {
     $ChromeBinPaths = @(
         "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
@@ -83,172 +138,372 @@ if (-not $ChromeInstalled) {
         "$env:LocalAppData\Google\Chrome\Application\chrome.exe"
     )
     foreach ($bp in $ChromeBinPaths) {
-        if (Test-Path -LiteralPath $bp) {
-            $ChromeInstalled = $true
-            Write-OK "Chrome found on disk: $bp"
-            break
-        }
+        if (Test-Path -LiteralPath $bp) { $ChromeInstalled = $true; break }
     }
 }
 
 if ($ChromeInstalled) {
-    Write-OK 'Google Chrome is already installed — skipping Chrome installation.'
+    Write-Skip 'Google Chrome is already installed — skipping.'
+    $Results['Google Chrome'] = 'Already installed (skipped)'
 } else {
-    Write-Warn 'Google Chrome is NOT installed. Proceeding with silent installation...'
+    Write-Info 'Chrome not found. Downloading and installing...'
+    if (Get-Installer -Url $ChromeMsiUrl -OutPath $ChromeMsiPath -Name 'Chrome Enterprise MSI' -MinBytes 1MB) {
+        try {
+            Write-Info 'Running silent MSI install...'
+            $p = Start-Process 'msiexec.exe' `
+                     -ArgumentList "/i `"$ChromeMsiPath`" /quiet /norestart ALLUSERS=1" `
+                     -Wait -PassThru
+            switch ($p.ExitCode) {
+                0    { Write-OK 'Chrome installed successfully.';           $ChromeInstalled = $true; $Results['Google Chrome'] = 'Installed OK' }
+                3010 { Write-OK 'Chrome installed (reboot suggested).';     $ChromeInstalled = $true; $Results['Google Chrome'] = 'Installed OK (reboot suggested)' }
+                1638 { Write-Skip 'Chrome already at this/newer version.';  $ChromeInstalled = $true; $Results['Google Chrome'] = 'Already installed (skipped)' }
+                default {
+                    Write-Warn "msiexec exited $($p.ExitCode). Chrome may not have installed."
+                    $Results['Google Chrome'] = "Install warning (exit $($p.ExitCode))"
+                }
+            }
+        } catch {
+            Write-Warn "Chrome install error: $($_.Exception.Message)"
+            $Results['Google Chrome'] = 'Install error'
+        } finally {
+            Remove-TempFile $ChromeMsiPath
+        }
+    } else {
+        $Results['Google Chrome'] = 'Download failed'
+    }
 }
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  STEP 2 — Download and silently install Google Chrome (if needed)
-# ══════════════════════════════════════════════════════════════════════════════
-if (-not $ChromeInstalled) {
+# ═════════════════════════════════════════════════════════════════════════════
+#  STEP 2 — WINRAR
+# ═════════════════════════════════════════════════════════════════════════════
+Write-Step 'WinRAR — Check & Install'
 
-    Write-Step 'Downloading Google Chrome Enterprise 64-bit MSI installer'
+$WinRarInstalled = $false
 
-    try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$WinRarRegPaths = @(
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\WinRAR archiver',
+    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\WinRAR archiver'
+)
+foreach ($rp in $WinRarRegPaths) {
+    if (Test-Path -LiteralPath $rp) { $WinRarInstalled = $true; break }
+}
 
-        Write-Info "Source : $ChromeMsiUrl"
-        Write-Info "Saving to : $ChromeMsiPath"
-        Write-Info 'Please wait — this is approximately 80 MB...'
-
-        Invoke-WebRequest -Uri         $ChromeMsiUrl `
-                          -OutFile     $ChromeMsiPath `
-                          -UseBasicParsing `
-                          -UserAgent   'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-
-        $fileSize = (Get-Item $ChromeMsiPath).Length
-        if ($fileSize -lt 1MB) {
-            throw "Downloaded file is too small ($fileSize bytes) — download may have failed."
-        }
-
-        Write-OK "Chrome MSI downloaded successfully ($([math]::Round($fileSize/1MB,1)) MB)"
-
-    } catch {
-        Write-Warn "Chrome download FAILED: $($_.Exception.Message)"
-        Write-Warn 'Cannot proceed without Chrome — GCPW requires Chrome to be installed.'
-        Write-Warn 'Please install Chrome manually from https://www.google.com/chrome/ and re-run.'
-        exit 1
+if (-not $WinRarInstalled) {
+    $WinRarBin = @(
+        "$env:ProgramFiles\WinRAR\WinRAR.exe",
+        "${env:ProgramFiles(x86)}\WinRAR\WinRAR.exe"
+    )
+    foreach ($b in $WinRarBin) {
+        if (Test-Path -LiteralPath $b) { $WinRarInstalled = $true; break }
     }
+}
 
-    # ── Silent MSI install ────────────────────────────────────────────────────
-    Write-Step 'Installing Google Chrome silently (no UI, no reboot prompt)'
+if ($WinRarInstalled) {
+    Write-Skip 'WinRAR is already installed — skipping.'
+    $Results['WinRAR'] = 'Already installed (skipped)'
+} else {
+    Write-Info 'WinRAR not found. Downloading and installing...'
+    if (Get-Installer -Url $WinRarUrl -OutPath $WinRarPath -Name 'WinRAR') {
+        try {
+            Write-Info 'Running WinRAR silent install (/S flag)...'
+            $p = Start-Process -FilePath $WinRarPath -ArgumentList '/S' -Wait -PassThru
+            if ($p.ExitCode -eq 0) {
+                Write-OK 'WinRAR installed successfully.'
+                $Results['WinRAR'] = 'Installed OK'
+            } else {
+                Write-Warn "WinRAR installer exited with code $($p.ExitCode)."
+                $Results['WinRAR'] = "Install warning (exit $($p.ExitCode))"
+            }
+        } catch {
+            Write-Warn "WinRAR install error: $($_.Exception.Message)"
+            $Results['WinRAR'] = 'Install error'
+        } finally {
+            Remove-TempFile $WinRarPath
+        }
+    } else {
+        $Results['WinRAR'] = 'Download failed'
+    }
+}
 
-    try {
-        Write-Info 'Running: msiexec.exe /i ChromeEnterprise64.msi /quiet /norestart ALLUSERS=1'
-        Write-Info 'This may take 30–90 seconds...'
+# ═════════════════════════════════════════════════════════════════════════════
+#  STEP 3 — VISUAL STUDIO CODE
+# ═════════════════════════════════════════════════════════════════════════════
+Write-Step 'Visual Studio Code — Check & Install'
 
-        $msiArgs = "/i `"$ChromeMsiPath`" /quiet /norestart ALLUSERS=1"
-        $proc    = Start-Process -FilePath 'msiexec.exe' `
-                                 -ArgumentList $msiArgs `
-                                 -Wait `
-                                 -PassThru
+$VSCodeInstalled = $false
 
-        switch ($proc.ExitCode) {
-            0    { Write-OK 'Chrome installed successfully (exit code 0 — clean install).' }
-            3010 { Write-OK 'Chrome installed successfully (exit code 3010 — reboot suggested but not required now).' }
-            1638 { Write-OK 'Chrome is already installed at this or a newer version (exit code 1638).' ; $ChromeInstalled = $true }
-            default {
-                Write-Warn "msiexec exited with code $($proc.ExitCode)."
-                Write-Warn 'Chrome may not have installed correctly. Continuing to GCPW anyway.'
+$VSCodeRegPaths = @(
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{EA457B21-F73E-494C-ACAB-524FDE069978}_is1',
+    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\{EA457B21-F73E-494C-ACAB-524FDE069978}_is1',
+    'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{771FD6B0-FA20-440A-A002-3B3BAC16DC50}_is1'
+)
+foreach ($rp in $VSCodeRegPaths) {
+    if (Test-Path -LiteralPath $rp) { $VSCodeInstalled = $true; break }
+}
+
+# Also check common uninstall key by display name pattern
+if (-not $VSCodeInstalled) {
+    $uninstallRoots = @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
+    )
+    foreach ($root in $uninstallRoots) {
+        if (Test-Path $root) {
+            $keys = Get-ChildItem -Path $root -ErrorAction SilentlyContinue
+            foreach ($k in $keys) {
+                $dn = (Get-ItemProperty -Path $k.PSPath -Name 'DisplayName' -ErrorAction SilentlyContinue).DisplayName
+                if ($dn -like '*Visual Studio Code*') { $VSCodeInstalled = $true; break }
             }
         }
-
-        if ($proc.ExitCode -eq 0 -or $proc.ExitCode -eq 3010) {
-            $ChromeInstalled = $true
-        }
-
-    } catch {
-        Write-Warn "Chrome MSI install error: $($_.Exception.Message)"
-    } finally {
-        # Always clean up the installer file
-        try { Remove-Item -Path $ChromeMsiPath -Force -ErrorAction SilentlyContinue } catch {}
-        Write-Info 'Chrome installer file removed from TEMP.'
-    }
-
-    # Verify Chrome is now present on disk
-    if ($ChromeInstalled) {
-        $chromeBin = "$env:ProgramFiles\Google\Chrome\Application\chrome.exe"
-        if (Test-Path -LiteralPath $chromeBin) {
-            $ver = (Get-Item $chromeBin).VersionInfo.ProductVersion
-            Write-OK "Chrome binary confirmed at: $chromeBin  (version $ver)"
-        } else {
-            Write-Warn 'Chrome binary not found at expected path after install.'
-            Write-Warn 'GCPW will still be installed — it may work if Chrome is elsewhere.'
-        }
+        if ($VSCodeInstalled) { break }
     }
 }
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  STEP 3 — Download and silently install GCPW
-# ══════════════════════════════════════════════════════════════════════════════
-Write-Step 'Downloading GCPW (Google Credential Provider for Windows) installer'
-
-try {
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-
-    Write-Info "Saving to : $GcpwInstaller"
-    Write-Info 'Please wait — downloading GCPW...'
-
-    Invoke-WebRequest -Uri         $GcpwUrl `
-                      -OutFile     $GcpwInstaller `
-                      -UseBasicParsing `
-                      -UserAgent   'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-
-    $gcpwSize = (Get-Item $GcpwInstaller).Length
-    if ($gcpwSize -lt 100KB) {
-        throw "GCPW installer is too small ($gcpwSize bytes) — download may have failed."
+if (-not $VSCodeInstalled) {
+    $vscodeBin = @(
+        "$env:ProgramFiles\Microsoft VS Code\Code.exe",
+        "$env:LocalAppData\Programs\Microsoft VS Code\Code.exe"
+    )
+    foreach ($b in $vscodeBin) {
+        if (Test-Path -LiteralPath $b) { $VSCodeInstalled = $true; break }
     }
-
-    Write-OK "GCPW installer downloaded ($([math]::Round($gcpwSize/1MB,2)) MB): $GcpwInstaller"
-
-} catch {
-    Write-Warn "GCPW download FAILED: $($_.Exception.Message)"
-    Write-Warn 'Please check your internet connection and try again.'
-    exit 1
 }
 
-# ── Silent GCPW install ───────────────────────────────────────────────────────
-Write-Step 'Installing GCPW silently'
-
-try {
-    Write-Info 'Running GCPW installer with /silent /install flags...'
-    Write-Info 'This may take 15–45 seconds...'
-
-    $gcpwProc = Start-Process -FilePath   $GcpwInstaller `
-                               -ArgumentList '/silent /install' `
-                               -WindowStyle Hidden `
-                               -Wait `
-                               -PassThru
-
-    if ($gcpwProc.ExitCode -eq 0) {
-        Write-OK "GCPW installed successfully (exit code 0)."
+if ($VSCodeInstalled) {
+    Write-Skip 'Visual Studio Code is already installed — skipping.'
+    $Results['Visual Studio Code'] = 'Already installed (skipped)'
+} else {
+    Write-Info 'VS Code not found. Downloading and installing...'
+    if (Get-Installer -Url $VSCodeUrl -OutPath $VSCodePath -Name 'VS Code' -MinBytes 50MB) {
+        try {
+            Write-Info 'Running VS Code silent install...'
+            $vscArgs = '/VERYSILENT /NORESTART /MERGETASKS=!runcode,addcontextmenufiles,addcontextmenufolders,associatewithfiles,addtopath'
+            $p = Start-Process -FilePath $VSCodePath -ArgumentList $vscArgs -Wait -PassThru
+            if ($p.ExitCode -eq 0) {
+                Write-OK 'Visual Studio Code installed successfully.'
+                $Results['Visual Studio Code'] = 'Installed OK'
+            } else {
+                Write-Warn "VS Code installer exited with code $($p.ExitCode)."
+                $Results['Visual Studio Code'] = "Install warning (exit $($p.ExitCode))"
+            }
+        } catch {
+            Write-Warn "VS Code install error: $($_.Exception.Message)"
+            $Results['Visual Studio Code'] = 'Install error'
+        } finally {
+            Remove-TempFile $VSCodePath
+        }
     } else {
-        Write-Warn "GCPW installer exited with code $($gcpwProc.ExitCode)."
-        Write-Warn 'This may be normal (some versions return non-zero on success).'
-        Write-Warn 'Continuing to registry configuration...'
+        $Results['Visual Studio Code'] = 'Download failed'
     }
-
-} catch {
-    Write-Warn "GCPW install error: $($_.Exception.Message)"
-    Write-Warn 'Continuing to registry configuration anyway...'
-} finally {
-    try { Remove-Item -Path $GcpwInstaller -Force -ErrorAction SilentlyContinue } catch {}
-    Write-Info 'GCPW installer file removed from TEMP.'
 }
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  STEP 4 — Configure GCPW registry keys
-# ══════════════════════════════════════════════════════════════════════════════
+# ═════════════════════════════════════════════════════════════════════════════
+#  STEP 4 — CHROME REMOTE DESKTOP HOST
+# ═════════════════════════════════════════════════════════════════════════════
+Write-Step 'Chrome Remote Desktop Host — Check & Install'
+
+$CRDInstalled = $false
+
+$CRDRegPaths = @(
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{40FF9932-4B3C-4B0F-8B97-51EB88A28B14}',
+    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\{40FF9932-4B3C-4B0F-8B97-51EB88A28B14}'
+)
+foreach ($rp in $CRDRegPaths) {
+    if (Test-Path -LiteralPath $rp) { $CRDInstalled = $true; break }
+}
+
+if (-not $CRDInstalled) {
+    # Search by display name
+    $uninstallRoots = @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+    )
+    foreach ($root in $uninstallRoots) {
+        if (Test-Path $root) {
+            $keys = Get-ChildItem -Path $root -ErrorAction SilentlyContinue
+            foreach ($k in $keys) {
+                $dn = (Get-ItemProperty -Path $k.PSPath -Name 'DisplayName' -ErrorAction SilentlyContinue).DisplayName
+                if ($dn -like '*Chrome Remote Desktop*') { $CRDInstalled = $true; break }
+            }
+        }
+        if ($CRDInstalled) { break }
+    }
+}
+
+if (-not $CRDInstalled) {
+    $crdBin = "$env:ProgramFiles\Google\Chrome Remote Desktop\CurrentVersion\remoting_host.exe"
+    if (Test-Path -LiteralPath $crdBin) { $CRDInstalled = $true }
+}
+
+if ($CRDInstalled) {
+    Write-Skip 'Chrome Remote Desktop is already installed — skipping.'
+    $Results['Chrome Remote Desktop'] = 'Already installed (skipped)'
+} else {
+    Write-Info 'Chrome Remote Desktop not found. Downloading and installing...'
+    if (Get-Installer -Url $CRDUrl -OutPath $CRDPath -Name 'Chrome Remote Desktop Host MSI' -MinBytes 10MB) {
+        try {
+            Write-Info 'Running Chrome Remote Desktop silent MSI install...'
+            $p = Start-Process 'msiexec.exe' `
+                     -ArgumentList "/i `"$CRDPath`" /quiet /norestart" `
+                     -Wait -PassThru
+            switch ($p.ExitCode) {
+                0    { Write-OK 'Chrome Remote Desktop installed successfully.'; $Results['Chrome Remote Desktop'] = 'Installed OK' }
+                3010 { Write-OK 'Chrome Remote Desktop installed (reboot suggested).'; $Results['Chrome Remote Desktop'] = 'Installed OK (reboot suggested)' }
+                1638 { Write-Skip 'Chrome Remote Desktop already at this/newer version.'; $Results['Chrome Remote Desktop'] = 'Already installed (skipped)' }
+                default {
+                    Write-Warn "msiexec exited $($p.ExitCode)."
+                    $Results['Chrome Remote Desktop'] = "Install warning (exit $($p.ExitCode))"
+                }
+            }
+        } catch {
+            Write-Warn "Chrome Remote Desktop install error: $($_.Exception.Message)"
+            $Results['Chrome Remote Desktop'] = 'Install error'
+        } finally {
+            Remove-TempFile $CRDPath
+        }
+    } else {
+        $Results['Chrome Remote Desktop'] = 'Download failed'
+    }
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  STEP 5 — LIGHTSHOT
+# ═════════════════════════════════════════════════════════════════════════════
+Write-Step 'Lightshot — Check & Install'
+
+$LightshotInstalled = $false
+
+# Check uninstall registry by display name
+$uninstallRoots = @(
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+    'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
+)
+foreach ($root in $uninstallRoots) {
+    if (Test-Path $root) {
+        $keys = Get-ChildItem -Path $root -ErrorAction SilentlyContinue
+        foreach ($k in $keys) {
+            $dn = (Get-ItemProperty -Path $k.PSPath -Name 'DisplayName' -ErrorAction SilentlyContinue).DisplayName
+            if ($dn -like '*Lightshot*') { $LightshotInstalled = $true; break }
+        }
+    }
+    if ($LightshotInstalled) { break }
+}
+
+if (-not $LightshotInstalled) {
+    $lsBin = @(
+        "$env:ProgramFiles\Lightshot\Lightshot.exe",
+        "${env:ProgramFiles(x86)}\Lightshot\Lightshot.exe",
+        "$env:LocalAppData\Lightshot\Lightshot.exe"
+    )
+    foreach ($b in $lsBin) {
+        if (Test-Path -LiteralPath $b) { $LightshotInstalled = $true; break }
+    }
+}
+
+if ($LightshotInstalled) {
+    Write-Skip 'Lightshot is already installed — skipping.'
+    $Results['Lightshot'] = 'Already installed (skipped)'
+} else {
+    Write-Info 'Lightshot not found. Downloading and installing...'
+    if (Get-Installer -Url $LightshotUrl -OutPath $LightshotPath -Name 'Lightshot') {
+        try {
+            Write-Info 'Running Lightshot silent install (/S flag)...'
+            $p = Start-Process -FilePath $LightshotPath -ArgumentList '/S' -Wait -PassThru
+            if ($p.ExitCode -eq 0) {
+                Write-OK 'Lightshot installed successfully.'
+                $Results['Lightshot'] = 'Installed OK'
+            } else {
+                Write-Warn "Lightshot installer exited with code $($p.ExitCode)."
+                $Results['Lightshot'] = "Install warning (exit $($p.ExitCode))"
+            }
+        } catch {
+            Write-Warn "Lightshot install error: $($_.Exception.Message)"
+            $Results['Lightshot'] = 'Install error'
+        } finally {
+            Remove-TempFile $LightshotPath
+        }
+    } else {
+        $Results['Lightshot'] = 'Download failed'
+    }
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  STEP 6 — GCPW (Google Credential Provider for Windows)
+# ═════════════════════════════════════════════════════════════════════════════
+Write-Step 'GCPW — Check & Install'
+
+$GCPWInstalled = $false
+
+$GcpwRegKey = 'HKLM:\Software\Google\GCPW'
+if (Test-Path -LiteralPath $GcpwRegKey) {
+    $existingDomain = (Get-ItemProperty -Path $GcpwRegKey -Name 'domains_allowed_to_login' -ErrorAction SilentlyContinue).domains_allowed_to_login
+    if ($existingDomain) {
+        $GCPWInstalled = $true
+        Write-Skip "GCPW registry key found with domain: $existingDomain"
+    }
+}
+
+if (-not $GCPWInstalled) {
+    # Also check via uninstall keys
+    $uninstallRoots = @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+    )
+    foreach ($root in $uninstallRoots) {
+        if (Test-Path $root) {
+            $keys = Get-ChildItem -Path $root -ErrorAction SilentlyContinue
+            foreach ($k in $keys) {
+                $dn = (Get-ItemProperty -Path $k.PSPath -Name 'DisplayName' -ErrorAction SilentlyContinue).DisplayName
+                if ($dn -like '*GCPW*' -or $dn -like '*Google Credential*') { $GCPWInstalled = $true; break }
+            }
+        }
+        if ($GCPWInstalled) { break }
+    }
+}
+
+if ($GCPWInstalled) {
+    Write-Skip 'GCPW appears already installed — will still re-apply registry configuration.'
+    $Results['GCPW'] = 'Already installed — registry updated'
+} else {
+    Write-Info 'GCPW not found. Downloading and installing...'
+    if (Get-Installer -Url $GcpwUrl -OutPath $GcpwInstaller -Name 'GCPW' -MinBytes 100KB) {
+        try {
+            Write-Info 'Running GCPW silent install...'
+            $p = Start-Process -FilePath $GcpwInstaller `
+                               -ArgumentList '/silent /install' `
+                               -WindowStyle Hidden -Wait -PassThru
+            if ($p.ExitCode -eq 0) {
+                Write-OK "GCPW installed successfully (exit 0)."
+                $Results['GCPW'] = 'Installed OK'
+            } else {
+                Write-Warn "GCPW installer exited $($p.ExitCode) — may still be OK. Continuing..."
+                $Results['GCPW'] = "Installed (exit $($p.ExitCode)) — check registry below"
+            }
+        } catch {
+            Write-Warn "GCPW install error: $($_.Exception.Message)"
+            $Results['GCPW'] = 'Install error'
+        } finally {
+            Remove-TempFile $GcpwInstaller
+        }
+    } else {
+        $Results['GCPW'] = 'Download failed'
+    }
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  STEP 7 — GCPW Registry Configuration
+# ═════════════════════════════════════════════════════════════════════════════
 Write-Step 'Writing GCPW configuration to registry'
 
-# Helper: create key + set value, never fails the script
 function Set-RegValue {
     param([string]$Path, [string]$Name, [string]$Value, [string]$Type = 'REG_SZ')
     try {
         & reg add $Path /v $Name /t $Type /d $Value /f 2>&1 | Out-Null
         Write-OK "Registry: $Path\$Name = $Value"
     } catch {
-        Write-Warn "Registry write failed for $Name : $($_.Exception.Message)"
+        Write-Warn "Registry write failed for ${Name}: $($_.Exception.Message)"
     }
 }
 
@@ -260,7 +515,7 @@ Set-RegValue 'HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\CloudManagement' `
 Set-RegValue 'HKEY_LOCAL_MACHINE\Software\Google\GCPW' `
              'domains_allowed_to_login' $Domain
 
-# Offline access validity (days the device can be used without re-authenticating online)
+# Offline access validity (days)
 Set-RegValue 'HKEY_LOCAL_MACHINE\Software\Google\GCPW' `
              'validity_period_in_days' '5' 'REG_DWORD'
 
@@ -268,33 +523,47 @@ Set-RegValue 'HKEY_LOCAL_MACHINE\Software\Google\GCPW' `
 Set-RegValue 'HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' `
              'dontdisplaylastusername' '1' 'REG_DWORD'
 
-# ── Verify GCPW registry entries were written ─────────────────────────────────
+# ── Verify GCPW registry ──────────────────────────────────────────────────────
 Write-Step 'Verifying GCPW registry configuration'
 
-$gcpwKey = 'HKLM:\Software\Google\GCPW'
-if (Test-Path -LiteralPath $gcpwKey) {
-    $gcpwDomain = (Get-ItemProperty -Path $gcpwKey -Name 'domains_allowed_to_login' -ErrorAction SilentlyContinue).domains_allowed_to_login
-    $gcpwDays   = (Get-ItemProperty -Path $gcpwKey -Name 'validity_period_in_days'  -ErrorAction SilentlyContinue).validity_period_in_days
-    Write-OK "GCPW key exists: $gcpwKey"
+if (Test-Path -LiteralPath $GcpwRegKey) {
+    $gcpwDomain = (Get-ItemProperty -Path $GcpwRegKey -Name 'domains_allowed_to_login' -ErrorAction SilentlyContinue).domains_allowed_to_login
+    $gcpwDays   = (Get-ItemProperty -Path $GcpwRegKey -Name 'validity_period_in_days'  -ErrorAction SilentlyContinue).validity_period_in_days
+    Write-OK "GCPW key confirmed: $GcpwRegKey"
     Write-OK "  domains_allowed_to_login = $gcpwDomain"
     Write-OK "  validity_period_in_days  = $gcpwDays"
 } else {
-    Write-Warn "GCPW registry key not found at $gcpwKey — GCPW may not have installed correctly."
-    Write-Warn 'Try running the script again after a reboot.'
+    Write-Warn "GCPW registry key NOT found at $GcpwRegKey"
+    Write-Warn 'GCPW may not have installed correctly. Try rebooting and re-running.'
 }
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ═════════════════════════════════════════════════════════════════════════════
 #  FINAL SUMMARY
-# ══════════════════════════════════════════════════════════════════════════════
+# ═════════════════════════════════════════════════════════════════════════════
 $sep = '=' * 72
 Write-Host ''
 Write-Host $sep -ForegroundColor Cyan
-Write-Host '   Installation Complete!' -ForegroundColor Green
+Write-Host '   Installation Complete! — Summary' -ForegroundColor Green
 Write-Host $sep -ForegroundColor Cyan
 Write-Host ''
-Write-Host '  RESULTS:' -ForegroundColor Yellow
-Write-Host "    Chrome installed     :  $ChromeInstalled"
-Write-Host '    GCPW installed       :  See exit codes above'
+Write-Host '  SOFTWARE RESULTS:' -ForegroundColor Yellow
+
+foreach ($item in $Results.GetEnumerator()) {
+    $color = switch -Wildcard ($item.Value) {
+        'Installed OK*'           { 'Green'    }
+        'Already installed*'      { 'DarkCyan' }
+        '*error*'                 { 'Red'      }
+        '*failed*'                { 'Red'      }
+        '*warning*'               { 'Yellow'   }
+        default                   { 'White'    }
+    }
+    $label = $item.Key.PadRight(26)
+    Write-Host "    $label : " -NoNewline -ForegroundColor White
+    Write-Host $item.Value -ForegroundColor $color
+}
+
+Write-Host ''
+Write-Host '  GCPW CONFIGURATION:' -ForegroundColor Yellow
 Write-Host "    Allowed domain       :  $Domain"
 Write-Host "    Enrollment token     :  $EnrollmentToken"
 Write-Host '    Offline validity     :  5 days'
@@ -303,14 +572,15 @@ Write-Host ''
 Write-Host '  NEXT STEPS:' -ForegroundColor Yellow
 Write-Host '    1.  RESTART this computer.'
 Write-Host '    2.  On the login screen you should see the GCPW sign-in option.'
-Write-Host '    3.  Click "Other user" and enter your @brightuitechnologies.com'
+Write-Host '    3.  Click "Other user" and sign in with your @brightuitechnologies.com'
 Write-Host '        Google Workspace email address.'
 Write-Host '    4.  Complete Google authentication to finish signing in.'
 Write-Host ''
 Write-Host '  TROUBLESHOOTING:' -ForegroundColor Yellow
 Write-Host '    - If GCPW does not appear after reboot, re-run this script as Administrator.'
-Write-Host '    - Ensure Chrome is installed BEFORE GCPW (this script handles that).'
+Write-Host '    - Ensure Chrome is installed BEFORE GCPW (this script handles that order).'
 Write-Host '    - Check Event Viewer > Application for GCPW errors if sign-in fails.'
+Write-Host '    - WinRAR: default trial — purchase licence if required by policy.'
 Write-Host "    - GCPW support: https://support.google.com/a/answer/9650196"
 Write-Host ''
 Write-Host $sep -ForegroundColor Cyan
