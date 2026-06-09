@@ -1,29 +1,18 @@
 <#
 ================================================================================
-  BrightUI Technologies — Windows 10 / 11 Login Screen Setup  v4.8.1
+  BrightUI Technologies — Windows 10 / 11 Login Screen Setup  v4.8
 ================================================================================
   HOW TO RUN THIS SCRIPT:
   ────────────────────────────────────────────────────────────────────────────
   DO NOT paste this into a PowerShell console window (here-strings break).
 
   CORRECT METHOD:
-    1.  Save this file as  BrightUI_Setup_V4.8.1.ps1
+    1.  Save this file as  BrightUI_Setup_V4.8.ps1
     2.  Open PowerShell as Administrator  (right-click → Run as Administrator)
     3.  cd "C:\path\to\folder"
-    4.  .\BrightUI_Setup_V4.8.1.ps1
+    4.  .\BrightUI_Setup_V4.8.ps1
 
-  CHANGES IN v4.8.1 (Fix for hangs & automatic restart):
-  ────────────────────────────────────────────────────────────────────────────
-  - $ErrorActionPreference changed from 'Stop' to 'Continue' so minor errors
-    never freeze the script.
-  - The GCPW installation block now downloads and runs the official standalone
-    EXE with /silent /install – no external scripts, no interactivity.
-  - Chrome installation remains fully silent (/quiet /norestart).
-  - All reg add calls use /f to force.
-  - Script will automatically restart the computer after a 5-second countdown
-    once everything is complete (no "Press Enter" required).
-
-  CHANGES IN v4.8 (compared to v4.7):
+  CHANGES IN v4.8  (compared to v4.7):
   ────────────────────────────────────────────────────────────────────────────
   SCHEDULED TASKS COMPLETELY REMOVED:
     - ALL Register-ScheduledTask calls have been removed from this script.
@@ -81,12 +70,12 @@
 ================================================================================
 #>
 
-$ErrorActionPreference = 'Continue'      # changed from 'Stop' to avoid script freezing on minor errors
+$ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
 
 Write-Host ''
 Write-Host ('=' * 72) -ForegroundColor Cyan
-Write-Host '   BrightUI Technologies — Windows Login Screen Setup  v4.8.1' -ForegroundColor Cyan
+Write-Host '   BrightUI Technologies — Windows Login Screen Setup  v4.8' -ForegroundColor Cyan
 Write-Host ('=' * 72) -ForegroundColor Cyan
 Write-Host ''
 
@@ -2327,7 +2316,7 @@ Set-Reg $hotkeyRegPath 'LogFile'          $Cfg_LogFile          'String'
 Set-Reg $hotkeyRegPath 'ListenerScript'   $listenerPath         'String'
 Set-Reg $hotkeyRegPath 'TriggerLock'      $Cfg_TriggerLock      'String'
 Set-Reg $hotkeyRegPath 'TriggerUnlock'    $Cfg_TriggerUnlock    'String'
-Set-Reg $hotkeyRegPath 'Version'          '4.8.1'                 'String'
+Set-Reg $hotkeyRegPath 'Version'          '4.8'                 'String'
 Set-Reg $hotkeyRegPath 'Note' `
     'v4.4 listener: RegisterHotKey + WH_KEYBOARD_LL + trigger files. Remote unlock via: New-Item C:\ProgramData\BrightUI\trigger_unlock.txt -Force' `
     'String'
@@ -2477,11 +2466,7 @@ try {
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STEP 19 — Check Chrome, Install if Missing, then Install GCPW  (v4.8.1 SILENT)
-#
-#  UPDATED v4.8.1: GCPW now installed directly via official standalone EXE
-#  with /silent /install. No external scripts, no interactivity.
-#  Chrome already uses /quiet /norestart.
+#  STEP 19 — Check Chrome, Install if Missing, then Install GCPW
 # ══════════════════════════════════════════════════════════════════════════════
 Write-Step 'Checking for Chrome installation (required before GCPW)'
 
@@ -2535,7 +2520,7 @@ if (-not $chromeInstalled) {
             Write-OK "Chrome installer downloaded: $chromeMsiPath"
             Write-Host '    Installing Chrome silently — this may take 30-60 seconds...'
             $msiArgs = "/i `"$chromeMsiPath`" /quiet /norestart ALLUSERS=1"
-            $proc    = Start-Process -FilePath 'msiexec.exe' -ArgumentList $msiArgs -Wait -PassThru -WindowStyle Hidden
+            $proc    = Start-Process -FilePath 'msiexec.exe' -ArgumentList $msiArgs -Wait -PassThru
             if ($proc.ExitCode -eq 0 -or $proc.ExitCode -eq 3010) {
                 $chromeInstalled = $true
                 Write-OK "Chrome installed successfully (exit code: $($proc.ExitCode))."
@@ -2557,45 +2542,26 @@ if (-not $chromeInstalled) {
     Write-OK 'Chrome is already installed — proceeding directly to GCPW installation.'
 }
 
-# ── 19c. GCPW silent installation (v4.8.1 — direct EXE, no external script) ───
-Write-Step 'Installing and configuring GCPW (Google Credential Provider for Windows) — Silent Mode'
-
-$enrollmentToken = 'f8a95d69-7c80-4dcb-b7b6-fb91de01dc57'
-$gcpwUrl         = "https://dl.google.com/tag/s/appguid=%7B32987697-A14E-4B89-84D6-630D5431E831%7D&needsadmin=true&appname=GCPW&etoken=$enrollmentToken/credentialprovider/gcpwstandaloneenterprise64.exe"
-$gcpwInstaller   = Join-Path $env:TEMP 'gcpwstandaloneenterprise64.exe'
+# ── 19c. Download and run the GCPW installation script ───────────────────────
+Write-Step 'Installing and configuring GCPW (Google Credential Provider for Windows)'
 
 try {
-    Write-Host '  Downloading GCPW installer...'
-    Invoke-WebRequest -Uri $gcpwUrl -OutFile $gcpwInstaller -UseBasicParsing `
-                      -UserAgent 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-    if ((Test-Path -LiteralPath $gcpwInstaller) -and ((Get-Item $gcpwInstaller).Length -gt 100KB)) {
-        Write-OK 'GCPW installer downloaded successfully'
-        Write-Host '  Running GCPW silent install...'
-        $p = Start-Process -FilePath $gcpwInstaller `
-                           -ArgumentList '/silent /install' `
-                           -WindowStyle Hidden -Wait -PassThru
-        if ($p.ExitCode -eq 0) {
-            Write-OK 'GCPW installed successfully'
-        } else {
-            Write-Warn "GCPW installer exited with code $($p.ExitCode) — may still be OK"
-        }
-        try { Remove-Item -Path $gcpwInstaller -Force -ErrorAction SilentlyContinue } catch {}
-    } else {
-        Write-Warn 'GCPW download appears incomplete'
-    }
+    Write-Host '  Downloading and executing GCPW installer script...'
+    iex (iwr 'https://raw.githubusercontent.com/Tech-Support-Automated/Powershellcode/master/GCPW.ps1').Content
+    Write-OK 'GCPW installer script executed successfully.'
 } catch {
-    Write-Warn "GCPW download/install failed: $($_.Exception.Message)"
+    Write-Warn "GCPW installation failed: $($_.Exception.Message)"
 }
 
-# ── 19d. Configure GCPW registry keys (already in script, keep them) ──────────
+# ── 19d. Configure GCPW registry keys ────────────────────────────────────────
 try {
-    & reg add "HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\CloudManagement" /v "EnrollmentToken" /t REG_SZ /d "$enrollmentToken" /f
+    & reg add "HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\CloudManagement" /v "EnrollmentToken" /t REG_SZ /d "f8a95d69-7c80-4dcb-b7b6-fb91de01dc57" /f
     Write-OK 'GCPW enrollment token configured.'
 } catch { Write-Warn "Failed to set EnrollmentToken: $($_.Exception.Message)" }
 
 try {
-    & reg add "HKEY_LOCAL_MACHINE\Software\Google\GCPW" /v domains_allowed_to_login /t REG_SZ /d "$Cfg_Domain" /f
-    Write-OK "GCPW allowed login domain: $Cfg_Domain"
+    & reg add "HKEY_LOCAL_MACHINE\Software\Google\GCPW" /v domains_allowed_to_login /t REG_SZ /d "brightuitechnologies.com" /f
+    Write-OK 'GCPW allowed login domain: brightuitechnologies.com'
 } catch { Write-Warn "Failed to set domains_allowed_to_login: $($_.Exception.Message)" }
 
 try {
@@ -2616,7 +2582,7 @@ try {
 $ld = '=' * 72
 Write-Host ''
 Write-Host $ld -ForegroundColor Cyan
-Write-Host '   BrightUI Technologies  -  Setup v4.8.1  Completed Successfully!' -ForegroundColor Green
+Write-Host '   BrightUI Technologies  -  Setup v4.8  Completed Successfully!' -ForegroundColor Green
 Write-Host $ld -ForegroundColor Cyan
 Write-Host ''
 Write-Host '  FILES STORED UNDER:' -ForegroundColor Yellow
@@ -2700,8 +2666,4 @@ Write-Host '        automatically with drive letters assigned via diskpart.'
 Write-Host '    8.  Verify GCPW by restarting and signing in with a Google Workspace account.'
 Write-Host ''
 Write-Host $ld -ForegroundColor Cyan
-
-# ── Automatic restart (added in v4.8.1) ───────────────────────────────────────
-Write-Host '  SYSTEM WILL RESTART IN 5 SECONDS. No action needed.' -ForegroundColor Magenta
-Start-Sleep -Seconds 5
-Restart-Computer -Force
+Write-Host ''
