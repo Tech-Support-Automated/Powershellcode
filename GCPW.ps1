@@ -99,6 +99,26 @@ function Remove-TempFile { param([string]$Path)
     try { Remove-Item -Path $Path -Force -ErrorAction SilentlyContinue } catch {}
 }
 
+# ── Generic detection: look for display name in uninstall keys ───────────────
+function Test-InstalledByDisplayName {
+    param([string]$DisplayNamePattern)
+    $roots = @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
+    )
+    foreach ($root in $roots) {
+        if (Test-Path $root) {
+            $keys = Get-ChildItem -Path $root -ErrorAction SilentlyContinue
+            foreach ($k in $keys) {
+                $dn = (Get-ItemProperty -Path $k.PSPath -Name 'DisplayName' -ErrorAction SilentlyContinue).DisplayName
+                if ($dn -like "*$DisplayNamePattern*") { return $true }
+            }
+        }
+    }
+    return $false
+}
+
 # ═════════════════════════════════════════════════════════════════════════════
 #  BANNER
 # ═════════════════════════════════════════════════════════════════════════════
@@ -171,21 +191,17 @@ if ($ChromeInstalled) {
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  STEP 2 — WINRAR
+#  STEP 2 — WINRAR (improved detection)
 # ═════════════════════════════════════════════════════════════════════════════
 Write-Step 'WinRAR — Check & Install'
 
 $WinRarInstalled = $false
 
-$WinRarRegPaths = @(
-    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\WinRAR archiver',
-    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\WinRAR archiver'
-)
-foreach ($rp in $WinRarRegPaths) {
-    if (Test-Path -LiteralPath $rp) { $WinRarInstalled = $true; break }
-}
-
-if (-not $WinRarInstalled) {
+# Check via uninstall display name first (covers all versions)
+if (Test-InstalledByDisplayName -DisplayNamePattern 'WinRAR') {
+    $WinRarInstalled = $true
+} else {
+    # Fallback to common binary paths
     $WinRarBin = @(
         "$env:ProgramFiles\WinRAR\WinRAR.exe",
         "${env:ProgramFiles(x86)}\WinRAR\WinRAR.exe"
@@ -203,7 +219,6 @@ if ($WinRarInstalled) {
     if (Get-Installer -Url $WinRarUrl -OutPath $WinRarPath -Name 'WinRAR') {
         try {
             Write-Info 'Running WinRAR silent install (/S flag)...'
-            # Added -WindowStyle Hidden to avoid any pop-up or freeze
             $p = Start-Process -FilePath $WinRarPath -ArgumentList '/S' `
                                -Wait -PassThru -WindowStyle Hidden
             if ($p.ExitCode -eq 0) {
@@ -225,40 +240,17 @@ if ($WinRarInstalled) {
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  STEP 3 — VISUAL STUDIO CODE
+#  STEP 3 — VISUAL STUDIO CODE (improved detection)
 # ═════════════════════════════════════════════════════════════════════════════
 Write-Step 'Visual Studio Code — Check & Install'
 
 $VSCodeInstalled = $false
 
-$VSCodeRegPaths = @(
-    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{EA457B21-F73E-494C-ACAB-524FDE069978}_is1',
-    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\{EA457B21-F73E-494C-ACAB-524FDE069978}_is1',
-    'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{771FD6B0-FA20-440A-A002-3B3BAC16DC50}_is1'
-)
-foreach ($rp in $VSCodeRegPaths) {
-    if (Test-Path -LiteralPath $rp) { $VSCodeInstalled = $true; break }
-}
-
-if (-not $VSCodeInstalled) {
-    $uninstallRoots = @(
-        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
-        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
-        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
-    )
-    foreach ($root in $uninstallRoots) {
-        if (Test-Path $root) {
-            $keys = Get-ChildItem -Path $root -ErrorAction SilentlyContinue
-            foreach ($k in $keys) {
-                $dn = (Get-ItemProperty -Path $k.PSPath -Name 'DisplayName' -ErrorAction SilentlyContinue).DisplayName
-                if ($dn -like '*Visual Studio Code*') { $VSCodeInstalled = $true; break }
-            }
-        }
-        if ($VSCodeInstalled) { break }
-    }
-}
-
-if (-not $VSCodeInstalled) {
+# Check via display name first
+if (Test-InstalledByDisplayName -DisplayNamePattern 'Visual Studio Code') {
+    $VSCodeInstalled = $true
+} else {
+    # Fallback to binary paths
     $vscodeBin = @(
         "$env:ProgramFiles\Microsoft VS Code\Code.exe",
         "$env:LocalAppData\Programs\Microsoft VS Code\Code.exe"
@@ -277,7 +269,6 @@ if ($VSCodeInstalled) {
         try {
             Write-Info 'Running VS Code silent install...'
             $vscArgs = '/VERYSILENT /NORESTART /MERGETASKS=!runcode,addcontextmenufiles,addcontextmenufolders,associatewithfiles,addtopath'
-            # Added -WindowStyle Hidden for fully invisible install
             $p = Start-Process -FilePath $VSCodePath -ArgumentList $vscArgs `
                                -Wait -PassThru -WindowStyle Hidden
             if ($p.ExitCode -eq 0) {
@@ -299,38 +290,15 @@ if ($VSCodeInstalled) {
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  STEP 4 — CHROME REMOTE DESKTOP HOST
+#  STEP 4 — CHROME REMOTE DESKTOP HOST (improved detection)
 # ═════════════════════════════════════════════════════════════════════════════
 Write-Step 'Chrome Remote Desktop Host — Check & Install'
 
 $CRDInstalled = $false
 
-$CRDRegPaths = @(
-    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{40FF9932-4B3C-4B0F-8B97-51EB88A28B14}',
-    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\{40FF9932-4B3C-4B0F-8B97-51EB88A28B14}'
-)
-foreach ($rp in $CRDRegPaths) {
-    if (Test-Path -LiteralPath $rp) { $CRDInstalled = $true; break }
-}
-
-if (-not $CRDInstalled) {
-    $uninstallRoots = @(
-        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
-        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
-    )
-    foreach ($root in $uninstallRoots) {
-        if (Test-Path $root) {
-            $keys = Get-ChildItem -Path $root -ErrorAction SilentlyContinue
-            foreach ($k in $keys) {
-                $dn = (Get-ItemProperty -Path $k.PSPath -Name 'DisplayName' -ErrorAction SilentlyContinue).DisplayName
-                if ($dn -like '*Chrome Remote Desktop*') { $CRDInstalled = $true; break }
-            }
-        }
-        if ($CRDInstalled) { break }
-    }
-}
-
-if (-not $CRDInstalled) {
+if (Test-InstalledByDisplayName -DisplayNamePattern 'Chrome Remote Desktop') {
+    $CRDInstalled = $true
+} else {
     $crdBin = "$env:ProgramFiles\Google\Chrome Remote Desktop\CurrentVersion\remoting_host.exe"
     if (Test-Path -LiteralPath $crdBin) { $CRDInstalled = $true }
 }
@@ -383,19 +351,9 @@ if (Test-Path -LiteralPath $GcpwRegKey) {
 }
 
 if (-not $GCPWInstalled) {
-    $uninstallRoots = @(
-        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
-        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
-    )
-    foreach ($root in $uninstallRoots) {
-        if (Test-Path $root) {
-            $keys = Get-ChildItem -Path $root -ErrorAction SilentlyContinue
-            foreach ($k in $keys) {
-                $dn = (Get-ItemProperty -Path $k.PSPath -Name 'DisplayName' -ErrorAction SilentlyContinue).DisplayName
-                if ($dn -like '*GCPW*' -or $dn -like '*Google Credential*') { $GCPWInstalled = $true; break }
-            }
-        }
-        if ($GCPWInstalled) { break }
+    if (Test-InstalledByDisplayName -DisplayNamePattern 'GCPW' -or 
+        Test-InstalledByDisplayName -DisplayNamePattern 'Google Credential') {
+        $GCPWInstalled = $true
     }
 }
 
