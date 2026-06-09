@@ -1,24 +1,24 @@
 <#
 ================================================================================
+  BrightUI Technologies — Full Silent Software Installer
+================================================================================
+  HOW TO RUN:
+    1. Open PowerShell as Administrator (right-click → Run as Administrator)
+    2. .\Install_BrightUI_Software.ps1
 
   WHAT THIS INSTALLS (silently, skips if already installed):
     1. Google Chrome          — Enterprise 64-bit MSI
-    2. WinRAR                 — 64-bit EXE (silent, window hidden)
-    3. Visual Studio Code     — System installer (silent, window hidden)
+    2. WinRAR                 — 64-bit EXE (silent)
+    3. Visual Studio Code     — System installer (silent)
     4. Chrome Remote Desktop  — Host MSI (silent)
-    5. GCPW                   — Google Credential Provider for Windows
+    5. Lightshot              — Silent EXE installer
+    6. GCPW                   — Google Credential Provider for Windows
 
   GCPW REGISTRY KEYS WRITTEN:
     • Enrollment token
     • Allowed login domain  (brightuitechnologies.com)
     • Offline validity period  (5 days)
     • Hide last username on login screen
-
-  AUTOMATIC BEHAVIOUR:
-    • No window prompts, no freezes, no "press Enter" anywhere
-    • Forces a restart of the computer once everything is done
-    • Silent install – not even progress bars are shown
-    • Runs as Administrator – UAC bypass is assumed
 
   REQUIREMENTS : Windows 10/11  |  Administrator rights  |  Internet access
   AFTER RUNNING: RESTART the computer for GCPW to appear on the login screen.
@@ -51,6 +51,7 @@ $ChromeMsiUrl  = 'https://dl.google.com/dl/chrome/install/googlechromestandalone
 $WinRarUrl     = 'https://www.win-rar.com/fileadmin/winrar-versions/winrar/winrar-x64-701.exe'
 $VSCodeUrl     = 'https://update.code.visualstudio.com/latest/win32-x64/stable'
 $CRDUrl        = 'https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi'
+$LightshotUrl  = 'https://app.prntscr.com/build/setup-lightshot.exe'
 $GcpwUrl       = "https://dl.google.com/tag/s/appguid=%7B32987697-A14E-4B89-84D6-630D5431E831%7D&needsadmin=true&appname=GCPW&etoken=$EnrollmentToken/credentialprovider/gcpwstandaloneenterprise64.exe"
 
 # ── Temp installer paths ──────────────────────────────────────────────────────
@@ -58,6 +59,7 @@ $ChromeMsiPath  = "$env:TEMP\ChromeEnterprise64.msi"
 $WinRarPath     = "$env:TEMP\winrar-x64.exe"
 $VSCodePath     = "$env:TEMP\vscode-system-installer.exe"
 $CRDPath        = "$env:TEMP\chromeremotedesktophost.msi"
+$LightshotPath  = "$env:TEMP\setup-lightshot.exe"
 $GcpwInstaller  = "$env:TEMP\gcpwstandaloneenterprise64.exe"
 
 # ── Result tracking ───────────────────────────────────────────────────────────
@@ -66,6 +68,7 @@ $Results = [ordered]@{
     'WinRAR'                 = 'Not attempted'
     'Visual Studio Code'     = 'Not attempted'
     'Chrome Remote Desktop'  = 'Not attempted'
+    'Lightshot'              = 'Not attempted'
     'GCPW'                   = 'Not attempted'
 }
 
@@ -104,12 +107,12 @@ function Remove-TempFile { param([string]$Path)
 # ═════════════════════════════════════════════════════════════════════════════
 Write-Host ''
 Write-Host ('=' * 72) -ForegroundColor Cyan
-Write-Host '   BrightUI Technologies — Silent Software Installer' -ForegroundColor Cyan
+Write-Host '   BrightUI Technologies — Full Silent Software Installer' -ForegroundColor Cyan
 Write-Host ('=' * 72) -ForegroundColor Cyan
 Write-Host ''
-Write-Host '  Softwares : Chrome, WinRAR, VS Code, Chrome Remote Desktop, GCPW' -ForegroundColor White
+Write-Host '  Softwares : Chrome, WinRAR, VS Code, Chrome Remote Desktop,' -ForegroundColor White
+Write-Host '              Lightshot, GCPW' -ForegroundColor White
 Write-Host '  Mode      : Silent install — already-installed apps are SKIPPED' -ForegroundColor White
-Write-Host '  After finish: Computer will restart automatically in 10 seconds.' -ForegroundColor Yellow
 Write-Host ''
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -203,9 +206,7 @@ if ($WinRarInstalled) {
     if (Get-Installer -Url $WinRarUrl -OutPath $WinRarPath -Name 'WinRAR') {
         try {
             Write-Info 'Running WinRAR silent install (/S flag)...'
-            # Added -WindowStyle Hidden to avoid any pop-up or freeze
-            $p = Start-Process -FilePath $WinRarPath -ArgumentList '/S' `
-                               -Wait -PassThru -WindowStyle Hidden
+            $p = Start-Process -FilePath $WinRarPath -ArgumentList '/S' -Wait -PassThru
             if ($p.ExitCode -eq 0) {
                 Write-OK 'WinRAR installed successfully.'
                 $Results['WinRAR'] = 'Installed OK'
@@ -240,6 +241,7 @@ foreach ($rp in $VSCodeRegPaths) {
     if (Test-Path -LiteralPath $rp) { $VSCodeInstalled = $true; break }
 }
 
+# Also check common uninstall key by display name pattern
 if (-not $VSCodeInstalled) {
     $uninstallRoots = @(
         'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
@@ -277,9 +279,7 @@ if ($VSCodeInstalled) {
         try {
             Write-Info 'Running VS Code silent install...'
             $vscArgs = '/VERYSILENT /NORESTART /MERGETASKS=!runcode,addcontextmenufiles,addcontextmenufolders,associatewithfiles,addtopath'
-            # Added -WindowStyle Hidden for fully invisible install
-            $p = Start-Process -FilePath $VSCodePath -ArgumentList $vscArgs `
-                               -Wait -PassThru -WindowStyle Hidden
+            $p = Start-Process -FilePath $VSCodePath -ArgumentList $vscArgs -Wait -PassThru
             if ($p.ExitCode -eq 0) {
                 Write-OK 'Visual Studio Code installed successfully.'
                 $Results['Visual Studio Code'] = 'Installed OK'
@@ -314,6 +314,7 @@ foreach ($rp in $CRDRegPaths) {
 }
 
 if (-not $CRDInstalled) {
+    # Search by display name
     $uninstallRoots = @(
         'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
         'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
@@ -367,7 +368,69 @@ if ($CRDInstalled) {
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  STEP 5 — GCPW (Google Credential Provider for Windows)
+#  STEP 5 — LIGHTSHOT
+# ═════════════════════════════════════════════════════════════════════════════
+Write-Step 'Lightshot — Check & Install'
+
+$LightshotInstalled = $false
+
+# Check uninstall registry by display name
+$uninstallRoots = @(
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+    'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
+)
+foreach ($root in $uninstallRoots) {
+    if (Test-Path $root) {
+        $keys = Get-ChildItem -Path $root -ErrorAction SilentlyContinue
+        foreach ($k in $keys) {
+            $dn = (Get-ItemProperty -Path $k.PSPath -Name 'DisplayName' -ErrorAction SilentlyContinue).DisplayName
+            if ($dn -like '*Lightshot*') { $LightshotInstalled = $true; break }
+        }
+    }
+    if ($LightshotInstalled) { break }
+}
+
+if (-not $LightshotInstalled) {
+    $lsBin = @(
+        "$env:ProgramFiles\Lightshot\Lightshot.exe",
+        "${env:ProgramFiles(x86)}\Lightshot\Lightshot.exe",
+        "$env:LocalAppData\Lightshot\Lightshot.exe"
+    )
+    foreach ($b in $lsBin) {
+        if (Test-Path -LiteralPath $b) { $LightshotInstalled = $true; break }
+    }
+}
+
+if ($LightshotInstalled) {
+    Write-Skip 'Lightshot is already installed — skipping.'
+    $Results['Lightshot'] = 'Already installed (skipped)'
+} else {
+    Write-Info 'Lightshot not found. Downloading and installing...'
+    if (Get-Installer -Url $LightshotUrl -OutPath $LightshotPath -Name 'Lightshot') {
+        try {
+            Write-Info 'Running Lightshot silent install (/S flag)...'
+            $p = Start-Process -FilePath $LightshotPath -ArgumentList '/S' -Wait -PassThru
+            if ($p.ExitCode -eq 0) {
+                Write-OK 'Lightshot installed successfully.'
+                $Results['Lightshot'] = 'Installed OK'
+            } else {
+                Write-Warn "Lightshot installer exited with code $($p.ExitCode)."
+                $Results['Lightshot'] = "Install warning (exit $($p.ExitCode))"
+            }
+        } catch {
+            Write-Warn "Lightshot install error: $($_.Exception.Message)"
+            $Results['Lightshot'] = 'Install error'
+        } finally {
+            Remove-TempFile $LightshotPath
+        }
+    } else {
+        $Results['Lightshot'] = 'Download failed'
+    }
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  STEP 6 — GCPW (Google Credential Provider for Windows)
 # ═════════════════════════════════════════════════════════════════════════════
 Write-Step 'GCPW — Check & Install'
 
@@ -383,6 +446,7 @@ if (Test-Path -LiteralPath $GcpwRegKey) {
 }
 
 if (-not $GCPWInstalled) {
+    # Also check via uninstall keys
     $uninstallRoots = @(
         'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
         'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
@@ -429,7 +493,7 @@ if ($GCPWInstalled) {
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  STEP 6 — GCPW Registry Configuration
+#  STEP 7 — GCPW Registry Configuration
 # ═════════════════════════════════════════════════════════════════════════════
 Write-Step 'Writing GCPW configuration to registry'
 
@@ -474,7 +538,7 @@ if (Test-Path -LiteralPath $GcpwRegKey) {
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  FINAL SUMMARY & AUTOMATIC RESTART
+#  FINAL SUMMARY
 # ═════════════════════════════════════════════════════════════════════════════
 $sep = '=' * 72
 Write-Host ''
@@ -506,7 +570,7 @@ Write-Host '    Offline validity     :  5 days'
 Write-Host '    Last username hidden :  Yes'
 Write-Host ''
 Write-Host '  NEXT STEPS:' -ForegroundColor Yellow
-Write-Host '    1.  RESTART this computer.' -ForegroundColor White
+Write-Host '    1.  RESTART this computer.'
 Write-Host '    2.  On the login screen you should see the GCPW sign-in option.'
 Write-Host '    3.  Click "Other user" and sign in with your @brightuitechnologies.com'
 Write-Host '        Google Workspace email address.'
@@ -519,11 +583,5 @@ Write-Host '    - Check Event Viewer > Application for GCPW errors if sign-in fa
 Write-Host '    - WinRAR: default trial — purchase licence if required by policy.'
 Write-Host "    - GCPW support: https://support.google.com/a/answer/9650196"
 Write-Host ''
-
-# ── Automatic restart after a short notice ────────────────────────────────────
-Write-Host '  SYSTEM WILL RESTART IN 5 SECONDS. No action needed.' -ForegroundColor Magenta
 Write-Host $sep -ForegroundColor Cyan
 Write-Host ''
-
-Start-Sleep -Seconds 5
-Restart-Computer -Force
