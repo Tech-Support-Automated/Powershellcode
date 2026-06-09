@@ -24,6 +24,33 @@
 ================================================================================
 #>
 
+# ── FIX: Disable QuickEdit mode to prevent console freeze on mouse click ──────
+if ($Host.Name -eq 'ConsoleHost') {
+    try {
+        Add-Type -MemberDefinition @'
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern IntPtr GetStdHandle(int nStdHandle);
+
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
+
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
+'@ -Name 'Kernel32' -Namespace 'Win32' -ErrorAction Stop
+
+        $handle = [Win32.Kernel32]::GetStdHandle(-10)
+        $mode = 0
+        if ([Win32.Kernel32]::GetConsoleMode($handle, [ref]$mode)) {
+            $mode = $mode -band -bnot 0x40   # Clear QuickEdit flag (0x40)
+            $mode = $mode -bor 0x80          # Set ExtendedFlags flag (required)
+            [Win32.Kernel32]::SetConsoleMode($handle, $mode) | Out-Null
+        }
+    } catch {
+        # If disabling fails for any reason, continue anyway
+    }
+}
+# ── End of QuickEdit fix ──────────────────────────────────────────────────────
+
 $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
 
