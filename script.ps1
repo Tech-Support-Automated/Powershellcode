@@ -400,8 +400,8 @@ $graphics.TextRenderingHint  = [System.Drawing.Text.TextRenderingHint]::ClearTyp
 # Layer 1 — deep navy-to-blue gradient background
 $ptTop     = New-Object System.Drawing.Point(0, 0)
 $ptBot     = New-Object System.Drawing.Point(0, $imgH)
-$clrNavy   = [System.Drawing.Color]::FromArgb(255,  4,  14,  34)
-$clrBlue   = [System.Drawing.Color]::FromArgb(255,  0,  52,  98)
+$clrNavy   = [System.Drawing.Color]::FromArgb(255,  4, 14,  34)
+$clrBlue   = [System.Drawing.Color]::FromArgb(255,  0, 52,  98)
 $gradBrush = New-Object System.Drawing.Drawing2D.LinearGradientBrush($ptTop, $ptBot, $clrNavy, $clrBlue)
 $graphics.FillRectangle($gradBrush, 0, 0, $imgW, $imgH)
 $gradBrush.Dispose()
@@ -1851,7 +1851,8 @@ for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
                                                     -PartitionNumber ([int]$part.PartitionNumber) `
                                                     -AccessPath "$($freeLetter):" `
                                                     -ErrorAction Stop
-                            Write-Log "  Partition $($part.PartitionNumber) assigned $freeLetter: via Add-PartitionAccessPath"
+                            # FIXED: use ${freeLetter}: to avoid variable parsing error
+                            Write-Log "  Partition $($part.PartitionNumber) assigned ${freeLetter}: via Add-PartitionAccessPath"
                         } catch {
                             Write-Log "  Add-PartitionAccessPath failed for partition $($part.PartitionNumber): $($_.Exception.Message)"
                         }
