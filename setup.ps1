@@ -1,13 +1,27 @@
 <#
 .SYNOPSIS
     Automated setup script: runs GCPW.ps1, script.ps1, downloads a logo,
-    creates default user account pictures, installs Lightshot & Office 2019 via Chocolatey,
+    creates default user account pictures, installs required software (Lightshot,
+    Office 2019, VS Code, SourceTree, Docker Desktop, GitHub Desktop) silently,
+    creates VS Code desktop shortcut, suppresses auto-launch of installed apps,
     then restarts the system. No activation scripts are included.
 .NOTES
     Must be run as Administrator.
 #>
 
 #Requires -RunAsAdministrator
+
+# ------------------------------------------------------------
+# Helper: Kill a process if it is running (case-insensitive)
+# ------------------------------------------------------------
+function Stop-ProcessIfRunning {
+    param([string]$ProcessName)
+    $proc = Get-Process -Name $ProcessName -ErrorAction SilentlyContinue
+    if ($proc) {
+        Write-Host "Stopping $ProcessName to prevent auto-launch..." -ForegroundColor Yellow
+        Stop-Process -Name $ProcessName -Force -ErrorAction SilentlyContinue
+    }
+}
 
 # ------------------------------------------------------------
 # 1. Run the first remote script (GCPW)
@@ -134,7 +148,7 @@ Write-Host "IMPORTANT: Sign out and sign back in (or restart Windows)." -Foregro
 Write-Host ""
 
 # ------------------------------------------------------------
-# 5. Install Chocolatey (if not already present)
+# 5. Install Chocolatey (if not already present) and enable global confirmation
 # ------------------------------------------------------------
 Write-Host "Checking for Chocolatey..." -ForegroundColor Cyan
 if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
@@ -154,32 +168,85 @@ if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
     Write-Host "Chocolatey is already installed." -ForegroundColor Green
 }
 
-# ------------------------------------------------------------
-# 6. Install Lightshot silently
-# ------------------------------------------------------------
-Write-Host "Installing Lightshot silently via Chocolatey..." -ForegroundColor Cyan
-try {
-    choco install lightshot -y --limit-output
-} catch {
-    Write-Host "ERROR: Lightshot installation failed. $_" -ForegroundColor Red
-    # Not critical; we continue
-}
-Write-Host "Lightshot installation complete." -ForegroundColor Green
+# Enable global confirmation to avoid any YES/NO prompts
+choco feature enable -n allowGlobalConfirmation
 
 # ------------------------------------------------------------
-# 7. Install Microsoft Office 2019 Professional Plus silently
+# 6. Install all required software silently
 # ------------------------------------------------------------
-Write-Host "Installing Microsoft Office 2019 Professional Plus (this may take several minutes)..." -ForegroundColor Cyan
-try {
-    choco install office2019proplus -y --limit-output
-} catch {
-    Write-Host "ERROR: Office 2019 installation failed. $_" -ForegroundColor Red
-    exit 1
+$packages = @(
+    "lightshot",           # already present, will reinstall/upgrade if needed
+    "office2019proplus",
+    "vscode",
+    "sourcetree",
+    "docker-desktop",
+    "github-desktop"
+)
+
+foreach ($pkg in $packages) {
+    Write-Host "Installing $pkg (this may take a while)..." -ForegroundColor Cyan
+    try {
+        # Use --ignore-detected-reboot to avoid hanging
+        choco install $pkg -y --limit-output --ignore-detected-reboot
+    } catch {
+        Write-Host "ERROR: $pkg installation failed. Continuing with next package. $_" -ForegroundColor Red
+    }
 }
-Write-Host "Office 2019 installation completed." -ForegroundColor Green
 
 # ------------------------------------------------------------
-# 8. Restart the system
+# 7. Prevent applications from auto-launching after installation
+# ------------------------------------------------------------
+Write-Host "Ensuring no installed applications open automatically..." -ForegroundColor Yellow
+
+# Potential process names that might have started after install
+$processesToKill = @(
+    "Code",                # VS Code
+    "SourceTree",
+    "GitHubDesktop",
+    "Docker Desktop",
+    "Docker",
+    "Lightshot"
+)
+
+foreach ($procName in $processesToKill) {
+    Stop-ProcessIfRunning -ProcessName $procName
+}
+
+# ------------------------------------------------------------
+# 8. Create desktop shortcut for VS Code
+# ------------------------------------------------------------
+Write-Host "Creating VS Code desktop shortcut..." -ForegroundColor Cyan
+$vscodePaths = @(
+    "$env:LOCALAPPDATA\Programs\Microsoft VS Code\Code.exe",
+    "${env:ProgramFiles}\Microsoft VS Code\Code.exe",
+    "${env:ProgramFiles(x86)}\Microsoft VS Code\Code.exe"
+)
+
+$vscodeExe = $null
+foreach ($path in $vscodePaths) {
+    if (Test-Path $path) {
+        $vscodeExe = $path
+        break
+    }
+}
+
+if ($vscodeExe) {
+    $desktop = [Environment]::GetFolderPath('Desktop')
+    $shortcutPath = Join-Path $desktop "Visual Studio Code.lnk"
+    
+    $WScriptShell = New-Object -ComObject WScript.Shell
+    $shortcut = $WScriptShell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath = $vscodeExe
+    $shortcut.WorkingDirectory = Split-Path $vscodeExe -Parent
+    $shortcut.Save()
+    
+    Write-Host "VS Code desktop shortcut created at: $shortcutPath" -ForegroundColor Green
+} else {
+    Write-Host "VS Code executable not found. Shortcut not created." -ForegroundColor Red
+}
+
+# ------------------------------------------------------------
+# 9. Restart the system
 # ------------------------------------------------------------
 Write-Host "All tasks completed. Restarting the system in 5 seconds..." -ForegroundColor Green
 Start-Sleep -Seconds 5
