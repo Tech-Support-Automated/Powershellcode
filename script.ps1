@@ -1,6 +1,7 @@
+Script.ps1
 <#
 ================================================================================
-  BrightUI Technologies — Windows 10 / 11 Login Screen Setup  v4.7 (UPDATED)
+  BrightUI Technologies — Windows 10 / 11 Login Screen Setup  v4.7
 ================================================================================
   HOW TO RUN THIS SCRIPT:
   ────────────────────────────────────────────────────────────────────────────
@@ -12,25 +13,42 @@
     3.  cd "C:\path\to\folder"
     4.  .\BrightUI_Setup_V4.7.ps1
 
-  UPDATES in this version (compared to original v4.7):
+  CHANGES IN v4.7  (compared to v4.6):
   ────────────────────────────────────────────────────────────────────────────
-  BLOCK @GMAIL.COM EXCEPT WHITELISTED ACCOUNTS:
-    - A list of 17 specific Gmail accounts is HARDCODED as exceptions.
-    - Browser sign‑in (Chrome & Edge) now uses a regular expression that
-      allows ONLY those Gmail addresses PLUS any @ldstech.io and
-      @brightuitechnologies.com account. All other @gmail.com accounts are blocked.
-    - The lock/unlock toggle scripts also enforce this same regex.
-    - Windows GCPW login allows @ldstech.io and @brightuitechnologies.com
-      domains, but NOT @gmail.com (GCPW cannot whitelist individual accounts
-      within a blocked domain). Therefore the exempted Gmail accounts can only
-      sign in to the browser, not to Windows via GCPW. See warning in the summary.
-    - Lock‑screen text and amber warning strip updated to reflect new rules.
+  TASK SCHEDULER CLEANUP:
+    - BrightUI_LoginReminder scheduled task has been REMOVED.
+      The reminder script file is still created but is no longer auto-launched.
+      All other tasks (SecurityLock, SecurityUnlock, HotkeyListener) remain.
 
-  ALLOWED DOMAIN ADDITION:
-    - @ldstech.io is now treated as a fully allowed domain alongside
-      @brightuitechnologies.com.
+  CHROME PRE-INSTALL CHECK:
+    - Before installing GCPW, the script now checks whether Google Chrome is
+      already installed on the system.
+    - If Chrome is NOT found, it downloads the Chrome enterprise offline
+      installer and installs it silently first.
+    - GCPW installation only proceeds after Chrome is confirmed present.
 
-  ALL OTHER FEATURES from v4.6/v4.7 are unchanged.
+  DESKTOP WALLPAPER (AUTO-SET & LOCKED):
+    - Downloads wallpaper image from:
+        https://raw.githubusercontent.com/Tech-Support-Automated/Powershellcode/master/Desktop_image.png
+    - Saves it to  C:\ProgramData\BrightUI\Assets\desktop_wallpaper.png
+    - Sets it as the desktop background using the FILL (stretch-to-fill) style
+      so the image covers the entire screen regardless of resolution.
+    - Locks the wallpaper via Group Policy (Personalization) so users cannot
+      change it through Settings, right-click desktop, or by switching themes.
+    - A startup Run key script re-applies the wallpaper at every logon to
+      ensure it is never overridden by theme changes.
+
+  REMOTE DESKTOP HOTKEY FIX:
+    - The C# hotkey listener now uses a low-level keyboard hook
+      (SetWindowsHookEx WH_KEYBOARD_LL) in ADDITION to RegisterHotKey.
+    - The low-level hook intercepts Ctrl+Alt+L and Ctrl+Alt+U at the kernel
+      level, which works even when Chrome Remote Desktop or any RDP session
+      is the active foreground window and would otherwise consume or suppress
+      hotkey messages.
+    - The hook runs on its own dedicated STA thread so it does not interfere
+      with the existing message loop.
+
+  ALL OTHER FEATURES from v4.6 are unchanged.
 
   COMPATIBILITY : Windows 10 Build 1703+  and  Windows 11 (all builds)
   REQUIREMENT   : Administrator rights
@@ -43,7 +61,7 @@ $ProgressPreference    = 'SilentlyContinue'
 
 Write-Host ''
 Write-Host ('=' * 72) -ForegroundColor Cyan
-Write-Host '   BrightUI Technologies — Windows Login Screen Setup  v4.7 (Updated)' -ForegroundColor Cyan
+Write-Host '   BrightUI Technologies — Windows Login Screen Setup  v4.7' -ForegroundColor Cyan
 Write-Host ('=' * 72) -ForegroundColor Cyan
 Write-Host ''
 
@@ -55,9 +73,6 @@ $Cfg_CompanyName = 'BrightUI Technologies'
 $Cfg_Domain      = 'brightuitechnologies.com'
 $Cfg_SupportURL  = 'https://portal.brightuitechnologies.com'
 $Cfg_LogoURL     = 'https://dev.brightuitechnologies.com/site/wp-content/themes/startnext/landing/img/logo.png'
-
-# NEW: Additional allowed domain
-$Cfg_AdditionalDomain = 'ldstech.io'
 
 # Desktop wallpaper source URL (downloaded fresh each time setup runs)
 $Cfg_WallpaperURL = 'https://raw.githubusercontent.com/Tech-Support-Automated/Powershellcode/master/Desktop_image.png'
@@ -83,50 +98,17 @@ $Cfg_UsbPolicyBase = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\RemovableStorage
 $Cfg_LockHotkeyName   = 'Ctrl+Alt+L'
 $Cfg_UnlockHotkeyName = 'Ctrl+Alt+U'
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  NEW: Allowed Gmail exceptions list (HARDCODED)
-#  These accounts are EXEMPT from the @gmail.com block.
-# ══════════════════════════════════════════════════════════════════════════════
-$AllowedGmailExceptions = @(
-    'buitesting01@gmail.com',
-    'buitesting02@gmail.com',
-    'buitesting03@gmail.com',
-    'buitesting05@gmail.com',
-    'buitesting07@gmail.com',
-    'buitesting08@gmail.com',
-    'buitesting09@gmail.com',
-    'buitesting10@gmail.com',
-    'buitesting14@gmail.com',
-    'buitesting17@gmail.com',
-    'brightuitesting@gmail.com',
-    'adbui2k20@gmail.com',
-    'designbui2k20@gmail.com',
-    'bisdevbui2k20@gmail.com',
-    'buitrainee1@gmail.com',
-    'buitrainee2@gmail.com',
-    'upborderaei@gmail.com'
-)
-
-# Build a regular expression that allows exactly those Gmail addresses
-# and everything from the two corporate domains.
-$escapedExceptions = $AllowedGmailExceptions | ForEach-Object { [regex]::Escape($_) }
-$exceptionList     = $escapedExceptions -join '|'
-# Pattern: ^ ( exact1 | exact2 | ... | .*@brightuitechnologies\.com | .*@ldstech\.io ) $
-$Cfg_AllowedAccountsPattern = "^(($exceptionList)|.*@$([regex]::Escape($Cfg_Domain))|.*@$([regex]::Escape($Cfg_AdditionalDomain)))$"
-
-# Updated legal notice and lock screen text
 $Cfg_NoticeTitle = 'Welcome to BrightUI Technologies'
 $Cfg_NoticeBody  =
     'To access this device, please read and follow all instructions below.'          + "`r`n`r`n" +
     'HOW TO SIGN IN:'                                                                + "`r`n"     +
     '  Step 1 :  Ensure this device is connected to the Internet.'                   + "`r`n"     +
     "  Step 2 :  On the login screen, click the 'Other Users  (->)' button."        + "`r`n"     +
-    "  Step 3 :  Enter your @$Cfg_Domain or @$Cfg_AdditionalDomain Google Workspace email address," + "`r`n" +
-    "            or one of the pre‑authorised Gmail accounts."                       + "`r`n"     +
+    "  Step 3 :  Enter your @$Cfg_Domain Gmail address."                             + "`r`n"     +
     '  Step 4 :  Complete the Google authentication steps.'                          + "`r`n`r`n" +
     'IMPORTANT RESTRICTIONS:'                                                        + "`r`n"     +
-    "  [X]  Only @$Cfg_Domain, @$Cfg_AdditionalDomain and authorised Gmail accounts are permitted." + "`r`n" +
-    '  [X]  Personal @gmail.com accounts are BLOCKED (except pre-approved).'         + "`r`n"     +
+    "  [X]  Only @$Cfg_Domain accounts are permitted."                               + "`r`n"     +
+    '  [X]  Personal @gmail.com accounts are NOT allowed.'                           + "`r`n"     +
     '  [X]  Accounts from other organisations are NOT allowed.'                      + "`r`n"     +
     '  [X]  USB storage devices are disabled by default.'                            + "`r`n"     +
     '  [X]  You MUST be connected to the Internet to sign in.'                       + "`r`n`r`n" +
@@ -245,6 +227,8 @@ Write-Step 'Applying desktop wallpaper and locking via Group Policy (Fill, locke
 if ($wallpaperDownloaded) {
 
     # --- 2C-1. Apply wallpaper immediately via Win32 SystemParametersInfo ---
+    # SPI_SETDESKWALLPAPER = 0x0014 (20)
+    # SPIF_UPDATEINIFILE   = 0x0001  |  SPIF_SENDCHANGE = 0x0002  → combined = 3
     Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -267,6 +251,8 @@ public class WallpaperAPI {
     }
 
     # --- 2C-2. Set Fill style in the current user's Desktop registry key ---
+    # WallpaperStyle 10 = Fill (covers full screen, crops edges if needed)
+    # TileWallpaper  0  = no tile
     try {
         $desktopRegPath = 'HKCU:\Control Panel\Desktop'
         Set-ItemProperty -Path $desktopRegPath -Name 'Wallpaper'      -Value $Cfg_WallpaperPath -Type String
@@ -278,6 +264,8 @@ public class WallpaperAPI {
     }
 
     # --- 2C-3. Lock wallpaper via Group Policy (Personalization) ---
+    # These policy values prevent ANY user from changing the wallpaper
+    # through Settings, right-click desktop, or theme switching.
     $persPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization'
     try {
         Set-Reg $persPath 'Wallpaper'              $Cfg_WallpaperPath 'String'
@@ -289,6 +277,8 @@ public class WallpaperAPI {
     }
 
     # --- 2C-4. Write a per-logon wallpaper re-apply script ---
+    # This runs at every user logon to re-enforce the wallpaper even if
+    # a theme change somehow overrides the policy setting.
     $wallpaperLogonScriptPath = Join-Path $Cfg_ScriptsDir 'BrightUI_SetWallpaper.ps1'
     $wallpaperLogonContent = @"
 # ============================================================
@@ -361,7 +351,6 @@ if (Test-Path -LiteralPath `$wallpaperFile) {
 # ══════════════════════════════════════════════════════════════════════════════
 #  STEP 3 — Build ADVANCED Branded 1920×1080 Lock Screen Background  (v4.1)
 #          Layer 13 (hotkey reminder text) removed per security requirements.
-#          Amber warning strip text updated for new domain rules.
 # ══════════════════════════════════════════════════════════════════════════════
 Write-Step 'Building advanced branded 1920x1080 lock screen background (v4.1)'
 
@@ -560,11 +549,10 @@ $stepSf = New-Object System.Drawing.StringFormat
 $stepSf.Alignment = [System.Drawing.StringAlignment]::Near
 $stepSf.LineAlignment = [System.Drawing.StringAlignment]::Center
 $stepSf.Trimming = [System.Drawing.StringTrimming]::Word
-# Updated step 3 text to reflect multiple allowed domains
 $steps = @(
     "Connect this device to the Internet before signing in.",
     "Click  'Other Users  (->)'  on the Windows sign-in screen.",
-    "Enter your  @$Cfg_Domain, @$Cfg_AdditionalDomain or authorised Gmail address.",
+    "Enter your  @$Cfg_Domain  Google Workspace email address.",
     "Complete the Google authentication steps to finish sign-in."
 )
 $stepRowH = 44
@@ -588,7 +576,7 @@ $stepCircleBrush.Dispose(); $stepNumFont.Dispose(); $stepNumBrush.Dispose()
 $stepTxtFont.Dispose(); $stepTxtBrush.Dispose(); $stepSf.Dispose()
 $sfC.Dispose()
 
-# Layer 12 — amber warning strip (UPDATED text)
+# Layer 12 — amber warning strip
 $warnH    = 66
 $warnRect = New-Object System.Drawing.Rectangle($cardX, [int]$curY, $cardW, $warnH)
 $warnBg   = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(28, 200, 140, 0))
@@ -602,8 +590,8 @@ $warnBrush  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromA
 $warnSf     = New-Object System.Drawing.StringFormat
 $warnSf.Alignment = [System.Drawing.StringAlignment]::Center
 $warnSf.LineAlignment = [System.Drawing.StringAlignment]::Center
-$warnLine1 = "  USB Storage Devices: BLOCKED      |      Browser Sign-In: Authorised accounts only"
-$warnLine2 = "  @$Cfg_Domain & @$Cfg_AdditionalDomain allowed  |  Specific Gmail accounts authorised"
+$warnLine1 = "  USB Storage Devices: BLOCKED      |      Browser Sign-In: @$Cfg_Domain accounts ONLY"
+$warnLine2 = "  Personal @gmail.com accounts: BLOCKED      |      Internet connection: REQUIRED"
 $warnRect1 = New-Object System.Drawing.RectangleF([float]$cardX, [float]$curY,          [float]$cardW, [float]($warnH / 2 + 2))
 $warnRect2 = New-Object System.Drawing.RectangleF([float]$cardX, [float]($curY + $warnH / 2 - 2), [float]$cardW, [float]($warnH / 2 + 2))
 $graphics.DrawString($warnLine1, $warnFont, $warnBrush, $warnRect1, $warnSf)
@@ -714,11 +702,11 @@ $connected = Test-Connection -ComputerName 8.8.8.8 -Count 1 -Quiet -ErrorAction 
 if (-not $connected) {
     [System.Windows.Forms.MessageBox]::Show(
         "This device is NOT connected to the Internet." + "`r`n`r`n" +
-        "You MUST be connected to sign in with your @brightuitechnologies.com or @ldstech.io account." + "`r`n`r`n" +
+        "You MUST be connected to sign in with your @brightuitechnologies.com account." + "`r`n`r`n" +
         "Steps to resolve:" + "`r`n" +
         "  1.  Connect to Wi-Fi or plug in an Ethernet cable." + "`r`n" +
         "  2.  Wait for the connection to be established." + "`r`n" +
-        "  3.  Sign out and back in with your Google Workspace account." + "`r`n`r`n" +
+        "  3.  Sign out and back in with your Gmail account." + "`r`n`r`n" +
         "IT support:  https://portal.brightuitechnologies.com",
         "BrightUI Technologies - No Internet Connection",
         [System.Windows.Forms.MessageBoxButtons]::OK,
@@ -754,27 +742,27 @@ Write-OK "State file initialised: LOCKED  ($Cfg_StateFile)"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STEP 10 — Chrome Enterprise Domain Restriction (UPDATED regex)
+#  STEP 10 — Chrome Enterprise Domain Restriction
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Step "Restricting Chrome browser sign-in (whitelist regex)"
+Write-Step "Restricting Chrome browser sign-in to @$Cfg_Domain accounts"
 
 $chromePath = 'HKLM:\SOFTWARE\Policies\Google\Chrome'
-Set-Reg $chromePath 'AllowedDomainsForApps'               "$Cfg_Domain,$Cfg_AdditionalDomain" 'String'
-Set-Reg $chromePath 'RestrictSigninToPattern'             $Cfg_AllowedAccountsPattern         'String'
-Set-Reg $chromePath 'BrowserSignin'                       1                                   'DWord'
-Set-Reg $chromePath 'SecondaryGoogleAccountSigninAllowed' 0                                   'DWord'
-Write-OK "Chrome: AllowedDomainsForApps = $Cfg_Domain,$Cfg_AdditionalDomain  |  RestrictSigninToPattern = regex (Gmail exceptions + ldstech.io + brightuitechnologies.com)"
+Set-Reg $chromePath 'AllowedDomainsForApps'               $Cfg_Domain       'String'
+Set-Reg $chromePath 'RestrictSigninToPattern'             "*@$Cfg_Domain"   'String'
+Set-Reg $chromePath 'BrowserSignin'                       1                 'DWord'
+Set-Reg $chromePath 'SecondaryGoogleAccountSigninAllowed' 0                 'DWord'
+Write-OK "Chrome: AllowedDomainsForApps = $Cfg_Domain  |  RestrictSigninToPattern = *@$Cfg_Domain"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STEP 11 — Microsoft Edge Domain Restriction (UPDATED regex)
+#  STEP 11 — Microsoft Edge Domain Restriction
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Step "Restricting Edge browser sign-in (whitelist regex)"
+Write-Step "Restricting Edge browser sign-in to @$Cfg_Domain accounts"
 
 $edgePath = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
-Set-Reg $edgePath 'RestrictSigninToPattern' $Cfg_AllowedAccountsPattern 'String'
-Set-Reg $edgePath 'BrowserSignin'           1                           'DWord'
-Write-OK "Edge: RestrictSigninToPattern = regex (Gmail exceptions + ldstech.io + brightuitechnologies.com)"
+Set-Reg $edgePath 'RestrictSigninToPattern' "*@$Cfg_Domain" 'String'
+Set-Reg $edgePath 'BrowserSignin'           1               'DWord'
+Write-OK "Edge: RestrictSigninToPattern = *@$Cfg_Domain"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1034,7 +1022,7 @@ $pBody.Controls.Add($pDivTop)
 $stepDefs = @(
     @{ N='1'; T='Ensure this device is connected to the Internet.' },
     @{ N='2'; T="Click  'Other Users  (->) '  on the sign-in screen." },
-    @{ N='3'; T='Enter your  @__DOMAIN__  or @__ADDOMAIN__ Google Workspace email, or an authorised Gmail address.' },
+    @{ N='3'; T='Enter your  @__DOMAIN__  Google Workspace email address.' },
     @{ N='4'; T='Complete the Google authentication steps to finish.' }
 )
 
@@ -1094,8 +1082,8 @@ $pWarn.Controls.Add($restrictHeader)
 
 $restrictions = @(
     '  [X]   USB storage devices are BLOCKED by default',
-    '  [X]   Only  @__DOMAIN__  & @__ADDOMAIN__  & authorised Gmail allowed',
-    '  [X]   Personal @gmail.com accounts are NOT allowed (except pre-approved)'
+    '  [X]   Only  @__DOMAIN__  accounts are permitted',
+    '  [X]   Personal @gmail.com accounts are NOT allowed'
 )
 $rY = 32
 foreach ($r in $restrictions) {
@@ -1171,7 +1159,6 @@ $tmr.Stop(); $tmr.Dispose(); $frm.Dispose()
 
 $reminderContent = $reminderContent -replace '__COMPANY__', $Cfg_CompanyName
 $reminderContent = $reminderContent -replace '__DOMAIN__',  $Cfg_Domain
-$reminderContent = $reminderContent -replace '__ADDOMAIN__', $Cfg_AdditionalDomain
 
 Set-Content -Path $reminderPath -Value $reminderContent -Encoding UTF8
 Write-OK "Advanced login reminder script saved: $reminderPath"
@@ -1180,7 +1167,6 @@ Write-OK 'NOTE (v4.7): NO scheduled task is created for this popup — file only
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  STEP 13 — Security Toggle Script  (legacy / manual admin use)
-#  UPDATED: uses the new allowed accounts regex.
 # ══════════════════════════════════════════════════════════════════════════════
 Write-Step 'Creating Security Toggle script (for manual admin / task-triggered use)'
 
@@ -1190,7 +1176,6 @@ $toggleContent = @"
 #  BrightUI Technologies - Security Toggle
 #  Accepts: -State (LOCKED|UNLOCKED|TOGGLE)
 #  For manual admin or scheduled-task use.
-#  Updated: browser restrictions use the authorised accounts regex.
 # ============================================================
 param([string]`$State = 'TOGGLE')
 `$ErrorActionPreference = 'Stop'
@@ -1202,8 +1187,6 @@ param([string]`$State = 'TOGGLE')
 `$chromePath = 'HKLM:\SOFTWARE\Policies\Google\Chrome'
 `$edgePath   = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
 `$domain     = '$Cfg_Domain'
-`$addDomain  = '$Cfg_AdditionalDomain'
-`$allowedPattern = '$Cfg_AllowedAccountsPattern'
 
 function Write-Log(`$msg) {
     `$line = "[`$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] `$msg"
@@ -1255,15 +1238,15 @@ function Remove-DomainRestrictions {
 }
 
 function Apply-DomainRestrictions {
-    Write-Log "Applying domain restrictions (regex)"
+    Write-Log "Applying domain restrictions"
     if (-not (Test-Path -LiteralPath `$chromePath)) { New-Item -Path `$chromePath -Force | Out-Null }
-    Set-ItemProperty -Path `$chromePath -Name 'AllowedDomainsForApps'               -Value "`$domain,`$addDomain" -Type String
-    Set-ItemProperty -Path `$chromePath -Name 'RestrictSigninToPattern'             -Value `$allowedPattern          -Type String
-    Set-ItemProperty -Path `$chromePath -Name 'BrowserSignin'                       -Value 1                         -Type DWord
-    Set-ItemProperty -Path `$chromePath -Name 'SecondaryGoogleAccountSigninAllowed' -Value 0                         -Type DWord
+    Set-ItemProperty -Path `$chromePath -Name 'AllowedDomainsForApps'               -Value `$domain      -Type String
+    Set-ItemProperty -Path `$chromePath -Name 'RestrictSigninToPattern'             -Value "*@`$domain"  -Type String
+    Set-ItemProperty -Path `$chromePath -Name 'BrowserSignin'                       -Value 1             -Type DWord
+    Set-ItemProperty -Path `$chromePath -Name 'SecondaryGoogleAccountSigninAllowed' -Value 0             -Type DWord
     if (-not (Test-Path -LiteralPath `$edgePath)) { New-Item -Path `$edgePath -Force | Out-Null }
-    Set-ItemProperty -Path `$edgePath -Name 'RestrictSigninToPattern' -Value `$allowedPattern -Type String
-    Set-ItemProperty -Path `$edgePath -Name 'BrowserSignin'           -Value 1                -Type DWord
+    Set-ItemProperty -Path `$edgePath -Name 'RestrictSigninToPattern' -Value "*@`$domain" -Type String
+    Set-ItemProperty -Path `$edgePath -Name 'BrowserSignin'           -Value 1            -Type DWord
 }
 
 `$current = 'LOCKED'
@@ -1296,9 +1279,8 @@ Write-OK "Toggle script saved: $togglePath"
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  STEP 13A — Dedicated LOCK Script  (v4.2 — self-elevation + immediate block)
-#  UPDATED: browser restrictions use the allowed accounts regex.
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Step 'Creating dedicated BrightUI_Lock.ps1 (v4.2 — immediate USB block & browser close, updated regex)'
+Write-Step 'Creating dedicated BrightUI_Lock.ps1 (v4.2 — immediate USB block & browser close)'
 
 $lockScriptContent = @'
 # ============================================================
@@ -1307,7 +1289,6 @@ $lockScriptContent = @'
 #  Disables USB storage, applies domain restrictions, updates state.
 #  New: self-elevation, stops USBSTOR service, disables all
 #       connected USB disks, terminates browsers for immediate effect.
-#  Updated: uses regex to allow specific Gmail accounts.
 # ============================================================
 
 # ── Self-elevation to administrator ───────────────────────────────────────────
@@ -1326,8 +1307,6 @@ $usbPolPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices
 $chromePath = 'HKLM:\SOFTWARE\Policies\Google\Chrome'
 $edgePath   = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
 $domain     = '__DOMAIN__'
-$addDomain  = '__ADDOMAIN__'
-$allowedPattern = '__ALLOWED_PATTERN__'
 
 function Write-Log([string]$msg) {
     try {
@@ -1336,7 +1315,7 @@ function Write-Log([string]$msg) {
     } catch {}
 }
 
-Write-Log "Lock script started (v4.2 updated)"
+Write-Log "Lock script started (v4.2)"
 
 # ── Check current state ───────────────────────────────────────────────────────
 $currentState = 'LOCKED'
@@ -1398,26 +1377,26 @@ try {
     Write-Log "USB Group Policy block applied"
 } catch { Write-Log "Error applying USB GP: $($_.Exception.Message)" }
 
-# ── 4. Apply Chrome domain restrictions (regex) ──────────────────────────────
+# ── 4. Apply Chrome domain restrictions ──────────────────────────────────────
 try {
     if (-not (Test-Path -LiteralPath $chromePath)) {
         New-Item -Path $chromePath -Force | Out-Null
     }
-    Set-ItemProperty -Path $chromePath -Name 'AllowedDomainsForApps'               -Value "$domain,$addDomain"  -Type String
-    Set-ItemProperty -Path $chromePath -Name 'RestrictSigninToPattern'             -Value $allowedPattern         -Type String
-    Set-ItemProperty -Path $chromePath -Name 'BrowserSignin'                       -Value 1                        -Type DWord
-    Set-ItemProperty -Path $chromePath -Name 'SecondaryGoogleAccountSigninAllowed' -Value 0                        -Type DWord
-    Write-Log "Chrome restrictions applied (regex - only allowed Gmail + domains)"
+    Set-ItemProperty -Path $chromePath -Name 'AllowedDomainsForApps'               -Value $domain     -Type String
+    Set-ItemProperty -Path $chromePath -Name 'RestrictSigninToPattern'             -Value "*@$domain" -Type String
+    Set-ItemProperty -Path $chromePath -Name 'BrowserSignin'                       -Value 1            -Type DWord
+    Set-ItemProperty -Path $chromePath -Name 'SecondaryGoogleAccountSigninAllowed' -Value 0            -Type DWord
+    Write-Log "Chrome restrictions applied (only @$domain allowed)"
 } catch { Write-Log "Error applying Chrome restrictions: $($_.Exception.Message)" }
 
-# ── 5. Apply Edge domain restrictions (regex) ────────────────────────────────
+# ── 5. Apply Edge domain restrictions ────────────────────────────────────────
 try {
     if (-not (Test-Path -LiteralPath $edgePath)) {
         New-Item -Path $edgePath -Force | Out-Null
     }
-    Set-ItemProperty -Path $edgePath -Name 'RestrictSigninToPattern' -Value $allowedPattern -Type String
-    Set-ItemProperty -Path $edgePath -Name 'BrowserSignin'           -Value 1                -Type DWord
-    Write-Log "Edge restrictions applied (regex)"
+    Set-ItemProperty -Path $edgePath -Name 'RestrictSigninToPattern' -Value "*@$domain" -Type String
+    Set-ItemProperty -Path $edgePath -Name 'BrowserSignin'           -Value 1            -Type DWord
+    Write-Log "Edge restrictions applied (only @$domain allowed)"
 } catch { Write-Log "Error applying Edge restrictions: $($_.Exception.Message)" }
 
 # ── 6. Force browsers to close so new policies take effect immediately ────────
@@ -1453,19 +1432,16 @@ $lockScriptContent = $lockScriptContent -replace '__STATE_FILE__', $Cfg_StateFil
 $lockScriptContent = $lockScriptContent -replace '__LOG_FILE__', $Cfg_LogFile
 $lockScriptContent = $lockScriptContent -replace '__USB_GUID__', $Cfg_UsbClassGuid
 $lockScriptContent = $lockScriptContent -replace '__DOMAIN__', $Cfg_Domain
-$lockScriptContent = $lockScriptContent -replace '__ADDOMAIN__', $Cfg_AdditionalDomain
-$lockScriptContent = $lockScriptContent -replace '__ALLOWED_PATTERN__', $Cfg_AllowedAccountsPattern
 
 Set-Content -Path $Cfg_LockScriptPath -Value $lockScriptContent -Encoding UTF8
-Write-OK "Lock script (v4.2 updated) saved: $Cfg_LockScriptPath"
-Write-OK 'Self-elevation, immediate USB block, browser termination, domain restrictions (regex).'
+Write-OK "Lock script (v4.2) saved: $Cfg_LockScriptPath"
+Write-OK 'Self-elevation, immediate USB block, browser termination, domain restrictions.'
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  STEP 13B — Dedicated UNLOCK Script  (v5.2 — ensures drives appear in Explorer)
-#  UPDATED: browser restrictions removal unchanged (removes all keys).
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Step 'Creating dedicated BrightUI_Unlock.ps1 (v5.2 — USB unlock + online all disks, updated regex)'
+Write-Step 'Creating dedicated BrightUI_Unlock.ps1 (v5.2 — USB unlock + online all disks)'
 
 $unlockScriptContent = @'
 <#
@@ -1479,7 +1455,6 @@ $unlockScriptContent = @'
 .NOTES
     Version 5.2 – Added automatic disk online + volume mount.
                   WriteProtect reset, DeviceInstall cleanup, USB hub restart.
-                  Browser restrictions removal clears all domain keys.
 #>
 
 # ── Self‑elevation to administrator ───────────────────────────────────────────
@@ -1514,7 +1489,7 @@ function Write-Log([string]$msg) {
     } catch {}
 }
 
-Write-Log "Unlock script started (v5.2 updated)"
+Write-Log "Unlock script started (v5.2)"
 
 # ── Check current state ───────────────────────────────────────────────────────
 $currentState = 'LOCKED'
@@ -1548,11 +1523,13 @@ try {
 } catch { Write-Log "WriteProtect note: $($_.Exception.Message)" }
 
 # ── 3. Clear all removable storage Group Policy blocks ────────────────────────
+# 3a. Deny_All (all classes)
 try {
     Set-ItemProperty -Path $remStorBase -Name 'Deny_All' -Value 0 -Type DWord -ErrorAction SilentlyContinue
     Write-Log "Deny_All reset to 0"
 } catch { Write-Log "Deny_All error: $_" }
 
+# 3b. Correct Removable Disks GUID (Deny_Read / Deny_Write)
 $remDiskPath = Join-Path $remStorBase $remDiskGuid
 try {
     if (-not (Test-Path -LiteralPath $remDiskPath)) {
@@ -1563,6 +1540,7 @@ try {
     Write-Log "Removable Disks policy reset (Deny_Read=0, Deny_Write=0)"
 } catch { Write-Log "Error resetting removable disk policy: $($_.Exception.Message)" }
 
+# 3c. Sweep all subkeys (CD‑ROM, WPD, etc.) to remove any leftover Deny_*
 try {
     Get-ChildItem -Path $remStorBase -ErrorAction SilentlyContinue | ForEach-Object {
         $props = @('Deny_Read','Deny_Write','Deny_All')
@@ -1600,6 +1578,7 @@ try {
         $dev | Enable-PnpDevice -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
         Write-Log "Enabled USB device: $($dev.FriendlyName)"
     }
+    # Fallback: enable any matching device regardless of status
     Get-PnpDevice -Class USB -ErrorAction SilentlyContinue |
         Where-Object { $_.FriendlyName -match 'Mass Storage|USB Attached SCSI|USB Storage' -or
                        $_.CompatibleID  -match 'USB\\\\Class_08' } |
@@ -1611,7 +1590,7 @@ try {
     Write-Log "PnP USB devices re‑enabled"
 } catch { Write-Log "PnP re‑enable error: $($_.Exception.Message)" }
 
-# ── 6. Restart USB hub(s) ─────────────────────────────────────────────────────
+# ── 6. Restart USB hub(s) so already‑plugged devices are rediscovered ─────────
 try {
     Get-PnpDevice -Class USB -FriendlyName '*Root Hub*' -ErrorAction SilentlyContinue |
         Where-Object { $_.Status -eq 'OK' } |
@@ -1623,22 +1602,26 @@ try {
         }
 } catch { Write-Log "Hub restart error: $_" }
 
-# ── 7. Force hardware scan ────────────────────────────────────────────────────
+# ── 7. Force hardware scan (final rediscovery) ────────────────────────────────
 try {
     pnputil.exe /scan-devices > $null 2>&1
     Write-Log "Hardware rescan issued"
 } catch { Write-Log "pnputil scan note: $_" }
 
-# ── 8. Bring all USB disks online and mount volumes ──────────────────────────
+# ── 8. NEW: Bring all USB disks online and mount volumes ──────────────────────
 Write-Log "Bringing USB disks online and mounting volumes..."
+
+# 8a. Start Shell Hardware Detection service (may be disabled)
 try {
     Set-Service -Name ShellHWDetection -StartupType Manual -ErrorAction SilentlyContinue
     Start-Service -Name ShellHWDetection -ErrorAction SilentlyContinue
     Write-Log "ShellHWDetection service started"
-} catch { Write-Log "ShellHWDetection service note: $_" }
+} catch { Write-Log "ShellHWDetection service note: $($_.Exception.Message)" }
 
+# 8b. Online all USB disks and remove read‑only flag
 $usbDisks = Get-Disk | Where-Object { $_.BusType -eq 'USB' }
 if (-not $usbDisks) {
+    # Fallback: try to find USB disks via CIM
     $usbCimDisks = Get-CimInstance -ClassName Win32_DiskDrive |
         Where-Object { $_.InterfaceType -eq 'USB' }
     foreach ($cimDisk in $usbCimDisks) {
@@ -1658,6 +1641,7 @@ foreach ($disk in $usbDisks) {
             Set-Disk -InputObject $disk -IsReadOnly $false
             Write-Log "Disk $($disk.Number) made writable"
         }
+        # Mount any partition without a drive letter
         $partitions = Get-Partition -DiskNumber $disk.Number -ErrorAction SilentlyContinue |
             Where-Object { $_.DriveLetter -eq $null -and $_.Type -ne 'Unknown' }
         foreach ($part in $partitions) {
@@ -1678,6 +1662,7 @@ foreach ($disk in $usbDisks) {
         }
     } catch { Write-Log "Error processing disk $($disk.Number): $($_.Exception.Message)" }
 }
+
 Write-Log "USB disk online/mount procedure completed"
 
 # ── 9. Remove Chrome domain restrictions ──────────────────────────────────────
@@ -1712,13 +1697,24 @@ Write-Log "Unlock script completed successfully"
 '@
 
 Set-Content -Path $Cfg_UnlockScriptPath -Value $unlockScriptContent -Encoding UTF8
-Write-OK "Unlock script (v5.2 updated) saved: $Cfg_UnlockScriptPath"
+Write-OK "Unlock script (v5.2) saved: $Cfg_UnlockScriptPath"
 Write-OK 'USB unlock, WriteProtect reset, DeviceInstall cleanup, disk online & mount, hub restart.'
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  STEP 14 — FIXED Security Hotkey Listener  (v4.3 — RDP/Remote Desktop fix)
-#  unchanged, but uses the same script paths.
+#
+#  Changes from v4.2:
+#    - Added a SECOND interception path using SetWindowsHookEx with
+#      WH_KEYBOARD_LL (low-level keyboard hook). This hook fires at the
+#      kernel level regardless of which window has focus, so it works even
+#      when Chrome Remote Desktop or an RDP client is the active foreground
+#      application and would otherwise swallow the key events.
+#    - The hook runs on its own dedicated STA thread so it never blocks the
+#      existing RegisterHotKey message loop.
+#    - Both paths (RegisterHotKey + LL hook) trigger the same ExecuteScript
+#      logic, with a short debounce (1 second) to prevent double-fire.
+#    - Existing UAC-via-runas elevation behaviour is completely unchanged.
 # ══════════════════════════════════════════════════════════════════════════════
 Write-Step 'Creating Hotkey Listener v4.3 (RegisterHotKey + LL hook for RDP compatibility)'
 
@@ -1764,6 +1760,7 @@ public class BrightUIHotkeyForm : Form {
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
+    // SetWindowsHookEx / CallNextHookEx for low-level keyboard hook (RDP fix)
     [DllImport("user32.dll", SetLastError = true)]
     private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn,
                                                    IntPtr hMod, uint dwThreadId);
@@ -1779,6 +1776,7 @@ public class BrightUIHotkeyForm : Form {
     [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
     private static extern IntPtr GetModuleHandle(string lpModuleName);
 
+    // GetAsyncKeyState to check modifier key states inside the LL hook
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int vKey);
 
@@ -1803,13 +1801,18 @@ public class BrightUIHotkeyForm : Form {
     private readonly string _lockScriptPath;
     private readonly string _unlockScriptPath;
 
+    // Low-level hook handle and delegate (must keep delegate alive to prevent GC)
     private IntPtr _llHookHandle = IntPtr.Zero;
-    private LowLevelKeyboardProc _llHookProc;
+    private LowLevelKeyboardProc _llHookProc;   // kept alive via field
+
+    // Debounce: prevent the LL hook and RegisterHotKey from both firing
     private DateTime _lastHotkeyFired = DateTime.MinValue;
     private const int DEBOUNCE_MS = 1200;
 
+    // ── Delegate type for LL keyboard hook ────────────────────────────────────
     private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
 
+    // ── KBDLLHOOKSTRUCT layout ────────────────────────────────────────────────
     [StructLayout(LayoutKind.Sequential)]
     private struct KBDLLHOOKSTRUCT {
         public uint vkCode;
@@ -1819,6 +1822,7 @@ public class BrightUIHotkeyForm : Form {
         public IntPtr dwExtraInfo;
     }
 
+    // ── Constructor ───────────────────────────────────────────────────────────
     public BrightUIHotkeyForm(string stateFilePath, string logFilePath,
                                string lockScriptPath, string unlockScriptPath) {
         _stateFile        = stateFilePath;
@@ -1833,6 +1837,7 @@ public class BrightUIHotkeyForm : Form {
         Opacity         = 0;
     }
 
+    // ── Logging ───────────────────────────────────────────────────────────────
     private void Log(string msg) {
         try {
             string timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
@@ -1842,15 +1847,19 @@ public class BrightUIHotkeyForm : Form {
         } catch { }
     }
 
+    // ── Form load: register hotkeys + install LL hook ─────────────────────────
     protected override void OnLoad(EventArgs e) {
         base.OnLoad(e);
         this.Hide();
 
+        // Method 1: RegisterHotKey (works in local sessions)
         uint combo = MOD_CONTROL | MOD_ALT | MOD_NOREPEAT;
         bool lockOk   = RegisterHotKey(Handle, HOTKEY_LOCK,   combo, VK_L);
         bool unlockOk = RegisterHotKey(Handle, HOTKEY_UNLOCK, combo, VK_U);
         Log("RegisterHotKey — Lock=" + lockOk.ToString() + " Unlock=" + unlockOk.ToString());
 
+        // Method 2: Low-level keyboard hook (works in RDP/Chrome Remote Desktop)
+        // Runs on a dedicated STA thread so it gets its own message pump.
         Thread hookThread = new Thread(() => {
             _llHookProc = new LowLevelKeyboardProc(LowLevelKeyboardCallback);
             using (System.Diagnostics.Process curProcess = System.Diagnostics.Process.GetCurrentProcess())
@@ -1863,6 +1872,7 @@ public class BrightUIHotkeyForm : Form {
             else
                 Log("WH_KEYBOARD_LL hook install failed (error " + Marshal.GetLastWin32Error() + "). Falling back to RegisterHotKey only.");
 
+            // Run a message loop on this thread so the LL hook receives events
             Application.Run();
         });
         hookThread.SetApartmentState(ApartmentState.STA);
@@ -1870,6 +1880,9 @@ public class BrightUIHotkeyForm : Form {
         hookThread.Start();
     }
 
+    // ── Low-level keyboard callback (fires for ALL keystrokes system-wide) ────
+    // This is what makes hotkeys work even when RDP/Chrome Remote Desktop
+    // has focus and would normally suppress RegisterHotKey messages.
     private IntPtr LowLevelKeyboardCallback(int nCode, IntPtr wParam, IntPtr lParam) {
         if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN)) {
             KBDLLHOOKSTRUCT kbStruct = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(
@@ -1877,11 +1890,14 @@ public class BrightUIHotkeyForm : Form {
 
             uint vk = kbStruct.vkCode;
 
+            // Only care about L (0x4C) and U (0x55) keys
             if (vk == VK_L || vk == (uint)VK_U) {
+                // Check Ctrl + Alt state asynchronously
                 bool ctrlDown = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
                 bool altDown  = (GetAsyncKeyState(VK_MENU)    & 0x8000) != 0;
 
                 if (ctrlDown && altDown) {
+                    // Debounce: ignore if the hotkey fired very recently
                     TimeSpan elapsed = DateTime.Now - _lastHotkeyFired;
                     if (elapsed.TotalMilliseconds > DEBOUNCE_MS) {
                         _lastHotkeyFired = DateTime.Now;
@@ -1890,6 +1906,7 @@ public class BrightUIHotkeyForm : Form {
                         string targetState = (vk == VK_L) ? "LOCKED" : "UNLOCKED";
                         string scriptPath  = (vk == VK_L) ? _lockScriptPath : _unlockScriptPath;
 
+                        // Marshal execution to the UI thread to keep thread safety
                         this.BeginInvoke((Action)(() => ExecuteScript(targetState, scriptPath)));
                     }
                 }
@@ -1898,9 +1915,11 @@ public class BrightUIHotkeyForm : Form {
         return CallNextHookEx(_llHookHandle, nCode, wParam, lParam);
     }
 
+    // ── WM_HOTKEY handler (RegisterHotKey path — local sessions) ──────────────
     protected override void WndProc(ref Message m) {
         if (m.Msg == WM_HOTKEY) {
             int id = m.WParam.ToInt32();
+            // Debounce to avoid double-fire if LL hook already handled it
             TimeSpan elapsed = DateTime.Now - _lastHotkeyFired;
             if (elapsed.TotalMilliseconds > DEBOUNCE_MS) {
                 _lastHotkeyFired = DateTime.Now;
@@ -1911,6 +1930,7 @@ public class BrightUIHotkeyForm : Form {
         base.WndProc(ref m);
     }
 
+    // ── Execute lock/unlock script via UAC runas ───────────────────────────────
     private void ExecuteScript(string targetState, string scriptPath) {
         try {
             string currentState = ReadState();
@@ -1935,7 +1955,7 @@ public class BrightUIHotkeyForm : Form {
                 Arguments       = args,
                 WindowStyle     = ProcessWindowStyle.Hidden,
                 CreateNoWindow  = true,
-                UseShellExecute = true,
+                UseShellExecute = true,    // triggers UAC because listener is limited user
                 Verb            = "runas"
             };
 
@@ -1955,6 +1975,7 @@ public class BrightUIHotkeyForm : Form {
         }
     }
 
+    // ── Read state file ────────────────────────────────────────────────────────
     private string ReadState() {
         try {
             if (File.Exists(_stateFile))
@@ -1963,6 +1984,7 @@ public class BrightUIHotkeyForm : Form {
         return "LOCKED";
     }
 
+    // ── Clean up hooks on close ────────────────────────────────────────────────
     protected override void OnFormClosing(FormClosingEventArgs e) {
         UnregisterHotKey(Handle, HOTKEY_LOCK);
         UnregisterHotKey(Handle, HOTKEY_UNLOCK);
@@ -2009,7 +2031,7 @@ Set-Reg $hotkeyRegPath 'UnlockScript'     $Cfg_UnlockScriptPath 'String'
 Set-Reg $hotkeyRegPath 'StateFile'        $Cfg_StateFile        'String'
 Set-Reg $hotkeyRegPath 'LogFile'          $Cfg_LogFile          'String'
 Set-Reg $hotkeyRegPath 'ListenerScript'   $listenerPath         'String'
-Set-Reg $hotkeyRegPath 'Version'          '4.7 (Updated)'       'String'
+Set-Reg $hotkeyRegPath 'Version'          '4.7'                 'String'
 Set-Reg $hotkeyRegPath 'Note' `
     'Admin-only. Hotkeys registered by BrightUI_HotkeyListener at logon. UAC prompt on each use. v4.3 listener adds WH_KEYBOARD_LL for RDP/remote support.' `
     'String'
@@ -2107,6 +2129,7 @@ $hotkeysPs1Path = Join-Path $Cfg_ScriptsDir 'BrightUI_Hotkeys.ps1'
 $hotkeysVbsPath = Join-Path $Cfg_ScriptsDir 'BrightUI_Hotkeys.vbs'
 $hotkeysRegPath = Join-Path $Cfg_ScriptsDir 'BrightUI_Hotkeys.reg'
 
+# 1) PowerShell hotkey listener (GetAsyncKeyState)
 $hotkeysPs1Content = @'
 Add-Type @"
 using System;
@@ -2153,6 +2176,7 @@ while ($true) {
 Set-Content -Path $hotkeysPs1Path -Value $hotkeysPs1Content -Encoding UTF8
 Write-OK "BrightUI_Hotkeys.ps1 saved: $hotkeysPs1Path"
 
+# 2) VBS launcher
 $hotkeysVbsContent = @"
 Set objShell = CreateObject("Wscript.Shell")
 objShell.Run "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File ""C:\ProgramData\BrightUI\Scripts\BrightUI_Hotkeys.ps1""", 0, False
@@ -2160,6 +2184,7 @@ objShell.Run "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File "
 Set-Content -Path $hotkeysVbsPath -Value $hotkeysVbsContent -Encoding ASCII
 Write-OK "BrightUI_Hotkeys.vbs saved: $hotkeysVbsPath"
 
+# 3) Registry file to run the VBS at user logon
 $hotkeysRegContent = @'
 Windows Registry Editor Version 5.00
 
@@ -2233,6 +2258,7 @@ Write-Step 'Checking for Chrome installation (required before GCPW)'
 # ── 19a. Detect Chrome ────────────────────────────────────────────────────────
 $chromeInstalled = $false
 
+# Check common Chrome installation paths in registry
 $chromeRegistryPaths = @(
     'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe',
     'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Google Chrome',
@@ -2246,6 +2272,7 @@ foreach ($path in $chromeRegistryPaths) {
     }
 }
 
+# Also check common on-disk locations as a fallback
 if (-not $chromeInstalled) {
     $chromeBinaryPaths = @(
         "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe",
@@ -2261,9 +2288,11 @@ if (-not $chromeInstalled) {
     }
 }
 
+# ── 19b. Install Chrome if not present ───────────────────────────────────────
 if (-not $chromeInstalled) {
     Write-Warn 'Google Chrome is NOT installed. Downloading and installing Chrome Enterprise before GCPW...'
 
+    # Google Chrome Enterprise MSI installer (64-bit, stable channel)
     $chromeMsiUrl  = 'https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi'
     $chromeMsiPath = Join-Path $env:TEMP 'ChromeEnterprise64.msi'
 
@@ -2278,6 +2307,7 @@ if (-not $chromeInstalled) {
         if ((Test-Path -LiteralPath $chromeMsiPath) -and ((Get-Item $chromeMsiPath).Length -gt 1MB)) {
             Write-OK "Chrome installer downloaded: $chromeMsiPath"
 
+            # Install silently: /quiet /norestart suppresses all UI and prevents auto-reboot
             Write-Host '    Installing Chrome silently — this may take 30-60 seconds...'
             $msiArgs = "/i `"$chromeMsiPath`" /quiet /norestart ALLUSERS=1"
             $proc    = Start-Process -FilePath 'msiexec.exe' -ArgumentList $msiArgs -Wait -PassThru
@@ -2292,6 +2322,7 @@ if (-not $chromeInstalled) {
                 Write-Warn 'Please install Chrome manually from https://www.google.com/chrome/ then re-run this script.'
             }
 
+            # Clean up the installer
             try { Remove-Item -Path $chromeMsiPath -Force -ErrorAction SilentlyContinue } catch {}
 
         } else {
@@ -2317,20 +2348,15 @@ try {
     Write-Warn "GCPW installation failed: $($_.Exception.Message)"
 }
 
-# ── 19d. Configure GCPW registry keys (UPDATED allowed domains) ──────────────
+# ── 19d. Configure GCPW registry keys ────────────────────────────────────────
 try {
     & reg add "HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\CloudManagement" /v "EnrollmentToken" /t REG_SZ /d "f8a95d69-7c80-4dcb-b7b6-fb91de01dc57" /f
     Write-OK 'GCPW enrollment token configured.'
 } catch { Write-Warn "Failed to set EnrollmentToken: $($_.Exception.Message)" }
 
 try {
-    # NOTE: GCPW domains_allowed_to_login supports comma‑separated list.
-    # Including ldstech.io alongside brightuitechnologies.com.
-    # gmail.com is NOT included, so even the exempted accounts cannot
-    # sign in to Windows via GCPW. This is a limitation of GCPW.
-    & reg add "HKEY_LOCAL_MACHINE\Software\Google\GCPW" /v domains_allowed_to_login /t REG_SZ /d "brightuitechnologies.com,ldstech.io" /f
-    Write-OK "GCPW allowed login domains: brightuitechnologies.com, ldstech.io"
-    Write-Warn "GCPW limitation: Specific Gmail accounts cannot sign in to Windows because gmail.com is not in the allowed domains list."
+    & reg add "HKEY_LOCAL_MACHINE\Software\Google\GCPW" /v domains_allowed_to_login /t REG_SZ /d "brightuitechnologies.com" /f
+    Write-OK 'GCPW allowed login domain: brightuitechnologies.com'
 } catch { Write-Warn "Failed to set domains_allowed_to_login: $($_.Exception.Message)" }
 
 try {
@@ -2338,6 +2364,7 @@ try {
     Write-OK 'GCPW validity period set to 5 days.'
 } catch { Write-Warn "Failed to set validity_period_in_days: $($_.Exception.Message)" }
 
+# ── 19e. Hide last username on login screen ───────────────────────────────────
 try {
     & reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v dontdisplaylastusername /t REG_DWORD /d 1 /f
     Write-OK 'Last username hidden on login screen (dontdisplaylastusername = 1).'
@@ -2350,7 +2377,7 @@ try {
 $ld = '=' * 72
 Write-Host ''
 Write-Host $ld -ForegroundColor Cyan
-Write-Host '   BrightUI Technologies  -  Setup v4.7 (Updated)  Completed Successfully!' -ForegroundColor Green
+Write-Host '   BrightUI Technologies  -  Setup v4.7  Completed Successfully!' -ForegroundColor Green
 Write-Host $ld -ForegroundColor Cyan
 Write-Host ''
 Write-Host '  FILES STORED UNDER:' -ForegroundColor Yellow
@@ -2360,9 +2387,9 @@ Write-Host '             lockscreen_bg.jpg        (1920x1080, quality 98)'
 Write-Host "             desktop_wallpaper.png    (downloaded: $wallpaperDownloaded — from GitHub URL)"
 Write-Host '    Scripts\ BrightUI_InternetCheck.ps1'
 Write-Host '             BrightUI_LoginReminder.ps1   (file only — NO scheduled task in v4.7)'
-Write-Host '             BrightUI_Toggle.ps1          (manual admin / task use — uses regex)'
-Write-Host '             BrightUI_Lock.ps1            (v4.2 updated — self-elevation, instant USB block, regex)'
-Write-Host '             BrightUI_Unlock.ps1          (v5.2 updated — online disks, mount volumes)'
+Write-Host '             BrightUI_Toggle.ps1          (manual admin / task use)'
+Write-Host '             BrightUI_Lock.ps1            (v4.2 — self-elevation, instant USB block)'
+Write-Host '             BrightUI_Unlock.ps1          (v5.2 — online disks, mount volumes)'
 Write-Host '             BrightUI_HotkeyListener.ps1  (v4.3 — RDP-safe: RegisterHotKey + LL hook)'
 Write-Host '             BrightUI_Hotkeys.ps1         (secondary hotkey monitor)'
 Write-Host '             BrightUI_Hotkeys.vbs         (launcher for secondary monitor)'
@@ -2372,20 +2399,19 @@ Write-Host "    hotkey_log.txt    (all toggle events logged here)"
 Write-Host "    toggle_state.txt  (current: LOCKED)"
 Write-Host ''
 Write-Host '  CONFIGURED:' -ForegroundColor Yellow
-Write-Host "    Lock Screen         :  Advanced JPEG — glow, step circles, amber strip (UPDATED text)"
+Write-Host "    Lock Screen         :  Advanced JPEG — glow, step circles, amber strip"
 Write-Host "    Default Win Image   :  REMOVED  (Spotlight + CDM disabled)"
 Write-Host "    Login Screen Blur   :  DISABLED (image renders crisp)"
 Write-Host "    Pre-Login Notice    :  Winlogon dialog (before PIN/password prompt)"
 Write-Host "    Post-Login Popup    :  Script file created — NOT auto-launched (task removed v4.7)"
-Write-Host "    Browser Restriction :  REGEX: allows specific Gmail accounts + @ldstech.io + @$Cfg_Domain"
-Write-Host "                           (all other @gmail.com are BLOCKED)"
+Write-Host "    Browser Restriction :  @$Cfg_Domain only (Chrome + Edge)"
 Write-Host "    USB Storage         :  BLOCKED  (driver + Group Policy)"
 Write-Host "    Desktop Wallpaper   :  Set to desktop_wallpaper.png (Fill — full screen cover)"
 Write-Host "                           Locked via GP — users cannot change it or override via themes"
 Write-Host "                           Re-downloaded and re-applied at every user logon"
 Write-Host ''
 Write-Host '  SECURITY MANAGEMENT:' -ForegroundColor Yellow
-Write-Host "    Ctrl+Alt+L  →  Lock   (UAC prompt)  — disables USB, restricts browsers (regex)"
+Write-Host "    Ctrl+Alt+L  →  Lock   (UAC prompt)  — disables USB, restricts browsers"
 Write-Host "    Ctrl+Alt+U  →  Unlock (UAC prompt)  — enables USB, brings disks online, removes restrictions"
 Write-Host "    Hotkeys work in LOCAL sessions AND during Chrome Remote Desktop / RDP sessions"
 Write-Host '    All toggle actions are recorded in:  C:\ProgramData\BrightUI\hotkey_log.txt'
@@ -2401,10 +2427,7 @@ Write-Host "    HKLM\SOFTWARE\BrightUI\Hotkeys            (documentation)"
 Write-Host "    HKLM\Run\BrightUIHotkeys                  (secondary hotkey monitor via VBS)"
 Write-Host "    HKLM\Run\BrightUI_Wallpaper               (wallpaper enforcer at logon)"
 Write-Host "    GCPW installed                             (Enrollment token set)"
-Write-Host "    Allowed login domains: brightuitechnologies.com, ldstech.io"
-Write-Host "    *** GCPW limitation: Specific Gmail accounts cannot log into Windows via GCPW because"
-Write-Host "        gmail.com is not in the allowed domains list. They CAN, however, use the browser"
-Write-Host "        (Chrome/Edge) where the regex policy applies."
+Write-Host "    Allowed login domain: brightuitechnologies.com"
 Write-Host "    Offline validity period: 5 days"
 Write-Host "    Last username hidden on login screen"
 Write-Host ''
@@ -2422,11 +2445,10 @@ Write-Host '    5.  Press Ctrl+Alt+L or Ctrl+Alt+U — a UAC prompt will appear.
 Write-Host '        This works even when connected via Chrome Remote Desktop.'
 Write-Host '    6.  After unlocking, any connected USB storage will be brought online'
 Write-Host '        and its partitions will automatically receive drive letters.'
-Write-Host '    7.  For Gmail enforcement in browser, the regex policy is active.'
-Write-Host "        Whitelisted Gmail accounts + @$Cfg_Domain + @$Cfg_AdditionalDomain can sign in."
-Write-Host '        All other Gmail accounts are blocked in Chrome/Edge.'
-Write-Host '    8.  Verify GCPW operation: only @brightuitechnologies.com and @ldstech.io accounts'
-Write-Host '        can log into Windows. (Whitelisted Gmail accounts cannot log into Windows.)'
+Write-Host '    7.  For Gmail OS enforcement, GCPW is now installed and configured.'
+Write-Host "        Users will be prompted to sign in with their @$Cfg_Domain account."
+Write-Host '    8.  Verify GCPW operation by restarting and signing in with a Google'
+Write-Host '        Workspace account.'
 Write-Host ''
 Write-Host $ld -ForegroundColor Cyan
 Write-Host ''
